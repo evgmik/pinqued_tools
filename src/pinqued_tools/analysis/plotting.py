@@ -8,7 +8,6 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
-
 def _mpl_prod_style():
     '''
     Sets production style plots rendering
@@ -90,7 +89,6 @@ def _mpl_tex_style(use_tex=False):
         'figure.dpi': 150,  # Sets display DPI
         'savefig.dpi': 300, # Sets saved image DPI
     })
-
 
 def set_mpl_style(style='tex', use_tex=False):
     '''
@@ -217,17 +215,22 @@ def lprobe_plot(data_dict: dict,
 
     return fig
 
-
-
-
 def plot_image_maginals(image_tuple: tuple[np.ndarray, np.ndarray, np.ndarray], 
                     xlabel:str = 'X-axis',
                     ylabel:str = 'Y-axis',
                     title: str = 'Pcolormesh with Marginal Profiles'
                     ):   
     '''
-    Plot image as pcolormesh with the marginal distributions 
+    Plots image as a pcolormesh with the marginal distributions 
     to the right and to the bottom of the image. 
+
+    :param image_tuple:tuple[np.ndarray, np.ndarray, np.ndarray]
+                        accepts tuple of three numpy arrays. 
+                        X axis samples, Y axis samples, 
+                        and 2D array of intensities.
+    :param xlabel:str sets label of the X axis.
+    :param ylabel:str sets label if the Y axis.
+    :param title:str sets title of the whole plot. 
     '''   
     # --- 1. Unpack data ---
     # x: samples in the x direction (1D array)
@@ -287,7 +290,6 @@ def plot_image_maginals(image_tuple: tuple[np.ndarray, np.ndarray, np.ndarray],
     fig.suptitle(title, fontsize=14, y=0.95)
 
     return fig
-
 
 if __name__=='__main__':
     set_mpl_style()
