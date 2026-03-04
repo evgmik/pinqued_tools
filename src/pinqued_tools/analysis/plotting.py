@@ -220,25 +220,32 @@ def lprobe_plot(data_dict: dict,
 
 
 
-def plot_image_hist(image_tuple: tuple[np.ndarray, np.ndarray, np.ndarray], 
+def plot_image_maginals(image_tuple: tuple[np.ndarray, np.ndarray, np.ndarray], 
                     xlabel:str = 'X-axis',
                     ylabel:str = 'Y-axis',
                     title: str = 'Pcolormesh with Marginal Profiles'
                     ):   
+    '''
+    Plot image as pcolormesh with the marginal distributions 
+    to the right and to the bottom of the image. 
+    '''   
     # --- 1. Unpack data ---
+    # x: samples in the x direction (1D array)
+    # y: samples in the y direction (1D array)
+    # Z: image or 2D distribution 
     x, y, Z = image_tuple
    
-    # Marginal data (e.g., the sum or mean along axes)
-    marginal_x = np.sum(Z, axis=0) # Bottom plot
-    marginal_y = np.sum(Z, axis=1) # Right plot
+    # Marginal data (the mean)
+    marginal_x = np.mean(Z, axis=0) # Bottom plot
+    marginal_y = np.mean(Z, axis=1) # Right plot
 
     # --- 2. Setup the Layout ---
     # Create a figure
     fig = plt.figure(figsize=(10, 8))
     
     # Define a grid: 2 rows, 2 columns
-    # height_ratios: Main plot is 3x taller than the bottom plot
-    # width_ratios: Main plot is 3x wider than the right plot
+    # height_ratios: Main plot is 2x taller than the bottom plot
+    # width_ratios: Main plot is 2x wider than the right plot
     gs = fig.add_gridspec(2, 2,  width_ratios=(2, 1), height_ratios=(2, 1),
                           left=0.1, right=0.9, bottom=0.1, top=0.9,
                           wspace=0.05, hspace=0.05)
@@ -288,6 +295,6 @@ if __name__=='__main__':
     x = np.linspace(-3,3,50)
     X,Y = np.meshgrid(x,x)
     img = np.exp(-0.5*(X**2+Y**2))
-    fig = plot_image_hist((x,x,img))
+    fig = plot_image_maginals((x,x,img))
     fig.set_size_inches((5,5))
 # %%
