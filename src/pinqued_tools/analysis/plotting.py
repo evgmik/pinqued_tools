@@ -291,6 +291,9 @@ def plot_image_maginals(image_tuple: tuple[np.ndarray, np.ndarray, np.ndarray],
 
     return fig
 
+
+
+
 if __name__=='__main__':
     set_mpl_style()
 
