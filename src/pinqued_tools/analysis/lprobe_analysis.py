@@ -9,11 +9,13 @@ import matplotlib.pyplot as plt
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel
 from sklearn.preprocessing import StandardScaler
+from sklearn.mixture import GaussianMixture
 from lmfit import Model
 from scipy.signal import find_peaks
+from scipy.interpolate import UnivariateSpline
 import os
 
-from plotting import set_mpl_style, lprobe_plot
+from plotting import set_mpl_style, lprobe_plot_gp
 set_mpl_style('nature')
 
 #%%
@@ -95,7 +97,6 @@ def electron_ion_parts(V_measured: np.ndarray, I_measured: np.ndarray):
 
     return V_ion, I_ion, V_electron, I_electron
 
-
 def fit_ion_current(V_measured: np.ndarray, I_measured: np.ndarray,
                     tolerance=0.1, fit_type='linear', return_fit=False, 
                     V_ion_cutoff=-10, min_sample_number=1):
@@ -164,6 +165,9 @@ def fit_langmuir_gp(V_measured: np.ndarray, I_measured: np.ndarray,
     kernel = RBF(length_scale=1.0, length_scale_bounds=(1e-4, 100.0)) \
            + WhiteKernel(noise_level=1e-6, noise_level_bounds=(1e-7, 1e-5))
     
+    # kernel = RBF(length_scale=1.0, length_scale_bounds=(1e-4, 100.0)) \
+    #        + WhiteKernel(noise_level=1e-6, noise_level_bounds=(1e-10, 1e-5))
+    
     gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, alpha=0.0)
     gp.fit(X_train, y_train)
     
@@ -218,6 +222,9 @@ def fit_langmuir_gp(V_measured: np.ndarray, I_measured: np.ndarray,
     
     return V_grid, I_pred, dI_dV, d2I_dV2, sigma, gp, V_scaler, I_scaler
 
+def fit_langmuir_spline(V_measured: np.ndarray, I_measured: np.ndarray, smothing_factor=0.5):
+    spl = UnivariateSpline(V_measured, I_measured, s=smothing_factor)
+    return spl(V_measured), spl.derivative(n=1)(V_measured), spl.derivative(n=2)(V_measured)
 
 def floating_potential(V_grid: np.ndarray, I_raw: np.ndarray, return_index=False):
     V_float_idx = ei_parts_separator_index(I_raw)
@@ -225,7 +232,6 @@ def floating_potential(V_grid: np.ndarray, I_raw: np.ndarray, return_index=False
     if return_index:
         return V_float, V_float_idx
     return V_float
-
 
 def plasma_potential(V_grid: np.ndarray, dI_dV: np.ndarray, V_drop=20, **kwargs):
     dI_dV_cropped = dI_dV[V_grid < V_drop]
@@ -236,7 +242,6 @@ def plasma_potential(V_grid: np.ndarray, dI_dV: np.ndarray, V_drop=20, **kwargs)
     plasma_potential = V_grid[pidx[0]]
     derivative = dI_dV[pidx[0]]
     return plasma_potential, derivative
-
 
 def electron_temperature(V_grid: np.ndarray, dlnI_dV: np.ndarray, 
                          V_plasma: float, V_float: float,
@@ -257,6 +262,44 @@ def electron_temperature(V_grid: np.ndarray, dlnI_dV: np.ndarray,
         return electron_temperature, min_idx
     return electron_temperature
 
+def hist_temp(I_electron: np.ndarray):
+    '''
+    Calculates electron temperature of the beam and plasma using histogram.
+    '''
+    fig, ax = plt.subplots()
+    ax.hist(I_electron, bins=20, density=True)
+    ax.set_xlabel('$T_e$ (eV)')
+    ax.set_ylabel('#')
+    return fig
+
+def gm_temp(inv_logderiv: np.ndarray):
+    
+    # 1. Prepare inverse log derivative of I-V curve
+    input_data = inv_logderiv.reshape(-1, 1)
+
+    # 2. Fit Gaussian Mixture Model
+    gmm = GaussianMixture(n_components=3, random_state=1)
+    gmm.fit(input_data)
+
+    # 3. Extract Means and Variances
+    means = gmm.means_.flatten()
+    variances = gmm.covariances_.flatten()
+
+    print("Peak 1: Mean =", means[0], ", Variance =", variances[0])
+    print("Peak 2: Mean =", means[1], ", Variance =", variances[1])
+
+    # 4. Visualization
+    plt.figure()
+    plt.hist(input_data, bins=20, alpha=0.5, color='gray')
+    plt.axvline(means[0], color='r', linestyle='--', label='Peak 1')
+    plt.axvline(means[1], color='b', linestyle='--', label='Peak 2')
+    plt.legend()
+    plt.xlabel('$T_e$ (eV)')
+    plt.ylabel('#')
+    plt.title("Bimodal Data with GMM Fit")
+    plt.show()
+
+    return (means, variances)
 
 def fit_electron_slope(V_measured: np.ndarray, I_measured: np.ndarray,I_sigma: np.ndarray,
                        V_float: float, 
@@ -279,8 +322,6 @@ def fit_electron_slope(V_measured: np.ndarray, I_measured: np.ndarray,I_sigma: n
     
     return result
 
-
-
 def plasma_parameters(V_raw: np.ndarray, I_raw: np.ndarray, probe_area=1, **kwargs):
 
     V_float_idx = ei_parts_separator_index(I_raw)
@@ -302,8 +343,7 @@ def plasma_parameters(V_raw: np.ndarray, I_raw: np.ndarray, probe_area=1, **kwar
     I_ion_fit = ion_fit[ion_mask]
 
      # 2. Fit with Gaussian Process
-    V_fit, I_fit, dI_dV, d2I_dV2, sigma, gp, V_scaler, I_scaler = fit_langmuir_gp(V_electron, I_electron_fit, n_grid=400)
-
+    V_fit, I_fit, dI_dV, d2I_dV2, sigma, gp, V_scaler, I_scaler = fit_langmuir_gp(V_electron, I_electron_fit, n_grid=800)
     # 3. Process 2nd derivative and Find Plasma Potential
     dlnI_dV = dI_dV/I_fit # Logarithmic derivative of current wrt voltage (~q/kT)
     V_plasma, dI_dV_max = plasma_potential(V_fit[V_fit>0], dI_dV[V_fit>0], V_drop=5, prominence=1e-7, width=[1,150])
@@ -317,7 +357,7 @@ def plasma_parameters(V_raw: np.ndarray, I_raw: np.ndarray, probe_area=1, **kwar
     fit_res = fit_electron_slope(V_fit[V_mask], I_fit[V_mask], 30*sigma[V_mask],
                                  V_float, Te, Te)
     fit_params = fit_res.params
-    fit_line = fit_params['Ie'].value + (V_fit - V_float) / fit_params['T1'].value 
+    fit_line = fit_params['Ie'].value + (V_fit - V_float) / fit_params['T1'].value
     # fit_res.plot()
     # print(fit_res.fit_report())
 
@@ -340,13 +380,11 @@ def plasma_parameters(V_raw: np.ndarray, I_raw: np.ndarray, probe_area=1, **kwar
                    'Te': Te,
                    'V_train': V_electron, 'I_train': I_electron_fit,
                    'V_electron': V_electron, 'I_electron': I_electron,
-                   'I_ion': I_ion, 'I_ion_fit': I_ion_fit,
                    'V_fit': V_fit, 'I_fit': I_fit,
+                   'V_ion': V_ion, 'I_ion': I_ion, 'I_ion_fit': I_ion_fit,
                    'dI_dV': dI_dV, 'd2I_dV2': d2I_dV2, 'dlnI_dV': dlnI_dV,
                    'dI_dV_max': dI_dV_max,
                    'sigma': sigma*30,
-                   'V_ion': V_ion, 'I_ion': I_ion,
-                   'I_ion_fit': I_ion_fit,
                    'residuals': I_residuals,
                    'fit_result': fit_res}
     return output_dict
@@ -365,16 +403,18 @@ if __name__ == "__main__":
     path = "G:\\My Drive\\Vaults\\WnM-AMO\\__Data\\2025-10-21\\data\\"
     date = "2025-10-21"
 
-    data_numbers = [20,21,22,23,24,25,26,27,28,29,30,32,33]
+    data_numbers = [6,8,9,11,13,14,15,16,18,19,20,21,22,23,24,25,26,27,28,29,30,32,33]
 
     electron_temperatures = []
+    beam_temperatures = []
     electron_temperatures_err = []
+    beam_temperatures_err = []
     plasma_potentials = []
     floating_potentials = []
 
 
     for data_number in data_numbers:
-        if data_number > 21: break
+        if not data_number == 21: break
         file_name = f"data-lprobe-{date}_{data_number}.csv"
         data_path =  os.path.join(path, file_name)
         V_raw, I_raw, _ = np.genfromtxt(data_path, delimiter=',', skip_header=2, unpack=True)
@@ -383,37 +423,63 @@ if __name__ == "__main__":
         plasma_dict.update({'data_number': data_number,
                             'date': date})
 
-
         current_best = plasma_dict['fit_result'].best_values['Ie']
         temp_electron_best = plasma_dict['fit_result'].best_values['T1']
         fit_line = current_best*np.exp((V_raw-plasma_dict['V_float'])/temp_electron_best)
 
         # 5. Create Plots
         # Create a figure with a GridSpec layout
-        fig = lprobe_plot(plasma_dict, figsize=(7,5),
+        fig = lprobe_plot_gp(plasma_dict, figsize=(7,5),
                           xlim=(-5.0,15.0), ylim=(1e-6,1e-3))
         fig.savefig(os.path.join(path, f'data_lprobe-{date}-{data_number}.png'))
 
-        electron_temperatures.append(plasma_dict['fit_result'].params['T1'].value)
-        electron_temperatures_err.append(plasma_dict['fit_result'].params['T1'].stderr)
+        # 6 Calculate electron temerpature
+        temp = 1.0/plasma_dict['dlnI_dV']
+        Vp = plasma_dict['V_plasma']
+        V = plasma_dict['V_fit']
+        temps, temps_err = gm_temp(temp[V<0])
+
+
+        T_plasma = temps[0] if temps[0]>temps[1] else temps[1]
+        T_beam = temps[0] if temps[0]<temps[1] else temps[1]
+
+        electron_temperatures.append(T_plasma)
+        beam_temperatures.append(T_beam)
+        electron_temperatures_err.append(temps_err[0])
+        beam_temperatures_err.append(temps_err[0])
         plasma_potentials.append(plasma_dict['V_plasma'])
         floating_potentials.append(plasma_dict['V_float'])
 
 # %%
 
-import pandas as pd
+    import pandas as pd
 
-table_dict = {'#': data_numbers[:2],
+    table_dict = {'#': data_numbers,
               'Electron temperature (eV)': electron_temperatures,
-              'Electron temperature error (eV)': electron_temperatures_err,
+              'Electron temperature error (eV)': np.repeat(np.max(electron_temperatures_err), len(electron_temperatures_err)),
+              'Beam temperature (eV)': beam_temperatures,
+              'Beam temperature error (eV)': np.repeat(np.max(beam_temperatures_err), len(beam_temperatures_err)),
               'Plasma potential (V)': plasma_potentials,
               'Floating potential (V)': floating_potentials}
 
-table = pd.DataFrame(table_dict)
-table
+    table = pd.DataFrame(table_dict)
+    table
 # %%
-table.plot(x='#', y='Electron temperature (eV)', marker='o',
-            xlabel='Measurement #', ylabel='$T_e$ (eV)')
+    fig, ax = plt.subplots()
+    ax.errorbar(table['#'], table['Electron temperature (eV)'], yerr=table['Electron temperature error (eV)'],
+                marker='o', linestyle='', capsize=2,
+                label='Plasma $e^-$', color='b')
+    ax.errorbar(table['#'], table['Beam temperature (eV)'], yerr=table['Beam temperature error (eV)'], 
+                marker='s', linestyle='', capsize=2,
+                label='Beam $e^-$', color='C3')
+    ax.set_xlabel('#')
+    ax.set_ylabel('Temperature (eV)')
+    ax.set_ylim([0.5,4.5])
+    ax.legend()
+
+#%%
+    # Save parameters table
+    # table.to_csv('electron_temperatures.csv', index=False)
 
 # %%
 # table.plot(x='#', y='Plasma potential (V)')
