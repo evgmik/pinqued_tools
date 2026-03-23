@@ -5,7 +5,6 @@ from Stark-split Rydberg EIT spectra
 Author: Mykhailo Vorobiov
 '''
 #%%
-
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -82,6 +81,7 @@ def eit_signal(freq: np.ndarray, # Frequency
     efield_ref = reference_dict['efield']
     stark_components_ref = reference_dict['stark_components']
 
+    scale_factor = params_dict['amp']
     width_0 = params_dict['width_0']
     gradE_dr = params_dict['gradE_dr']
 
@@ -92,16 +92,14 @@ def eit_signal(freq: np.ndarray, # Frequency
         fpos_tuple = reference_interp(efield,
                                       reference=(efield_ref, fpos_ref))
         fpos, fpos_grad = fpos_tuple
-        print(fpos_tuple)
-        print(fpos, fpos_grad)
         width = width_0  - fpos_grad * gradE_dr
         params = {'func': lineshape_func,
                   'width': width, 
                   'fpos': fpos,
                   'amplitude': amp_rel}
         spec_lines_dict.append(params)
-        
-    spectrum = params_dict['amp'] * simulate_spectrum(freq, spec_lines_dict)
+    
+    spectrum = scale_factor * simulate_spectrum(freq, spec_lines_dict)
     return spectrum
 #%%
 if __name__=='__main__':
