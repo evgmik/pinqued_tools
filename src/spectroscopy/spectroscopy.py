@@ -11,7 +11,7 @@ def gaussian(freq: np.ndarray,
              amplitude: float = 1.0,
              normalized: bool = True) -> np.ndarray:
     '''
-    Normalized Gaussian lineshape
+    Gaussian lineshape
     '''
     sigma = width / np.sqrt(8*np.log(2))
     norm = 1.0 / np.sqrt(2 * np.pi * sigma)
@@ -27,7 +27,7 @@ def lorentzian(freq: np.ndarray,
               amplitude: float = 1.0,
               normalized: bool = True) -> np.ndarray:
     '''
-    Normalized Lorentzian lineshape
+    Lorentzian lineshape
     '''
     norm = 2.0 * width / np.pi 
     shape = 1.0 / (1.0 + (2.0 * (freq - fpos) / width)**2)
@@ -42,7 +42,7 @@ def holtsmarkian(freq: np.ndarray,
                 amplitude: float = 1.0,
                 normalized: bool = True) -> np.ndarray:
     '''
-    Normalized Holtsmark lineshape
+    Holtsmark lineshape
     '''
     norm = (5.0/(2.0*np.pi))*np.sin(2.0*np.pi/5) / width
     arg = (2 * np.abs(freq - fpos) / width)**(2.5)
