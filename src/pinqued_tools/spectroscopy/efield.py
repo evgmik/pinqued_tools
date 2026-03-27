@@ -20,7 +20,7 @@ def reference_interp(efield: float,
                   ):
     '''
     Interpolates between points of the reference for a given E-field.
-    Calculates 1st and 2nd derivatives of the reference.
+    Calculates 1st derivative of the reference f(E) dependence.
     '''
     # 1. Unpack samples of the reference E-field and peak positions
     efield_reference, peak_pos_reference = reference

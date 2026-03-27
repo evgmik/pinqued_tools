@@ -3,7 +3,6 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
-#%%
 
 def gaussian(freq: np.ndarray, 
              fpos: float = 0.0, # Units of `freq`
@@ -109,7 +108,7 @@ if __name__=='__main__':
     ]
 
     # 2. Frequency detunings -100 to 100 MHz
-    x = np.linspace(-100,100, 1000)
+    x = np.linspace(-100,100,1000)
 
     # 3. Plot all available spectral lines
     labels = ['Gauss', 'Lorentz', 'Holtsmark']

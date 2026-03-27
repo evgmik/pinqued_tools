@@ -3,10 +3,10 @@ Author: Mykhailo Vorobiov
 This file contains functions that modify and predefine 
 certain types of plotting styles.
 '''
-#%%
-import numpy as np
+
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+
 
 def _mpl_prod_style():
     '''
@@ -28,7 +28,6 @@ def _mpl_nature_style(use_tex=False):
     plt.rcParams.update({
         'text.usetex': use_tex,
         'figure.figsize': [3.38, 3.38],
-        'lines.linewidth': 1,
         'lines.linewidth': 1,
         'xtick.top': True,
         'ytick.right': True, 
@@ -90,6 +89,7 @@ def _mpl_tex_style(use_tex=False):
         'savefig.dpi': 300, # Sets saved image DPI
     })
 
+
 def set_mpl_style(style='tex', use_tex=False):
     '''
     Select predefined matplotlib plotting style
@@ -105,7 +105,7 @@ def set_mpl_style(style='tex', use_tex=False):
     elif style=='prod': # Production style for daily plotting
         _mpl_prod_style()
 
-def lprobe_plot(data_dict: dict, 
+def lprobe_plot_gp(data_dict: dict, 
                 ylim, xlim,
                 figsize=(12, 9)
                 ):
@@ -125,7 +125,7 @@ def lprobe_plot(data_dict: dict,
     V_electron_fit = data_dict['V_fit']
     I_electron_fit = data_dict['I_fit']
     dI_dV = data_dict['dI_dV']
-    # d2I_dV2 = data_dict['d2I_dV2']
+    d2I_dV2 = data_dict['d2I_dV2']
     sigma = data_dict['sigma']
     V_plasma = data_dict['V_plasma']
     I_ion_fit = data_dict['I_ion_fit']
@@ -154,14 +154,14 @@ def lprobe_plot(data_dict: dict,
     # --- Top Plot: I-V Curve ---
     # ax1.plot(V_fit, I_slope_fit, color='C3')
     # ax1.plot(V_electron, fit_line, color='C3', linestyle='--', linewidth=2)
-    ax1.plot(V_electron, I_electron, color='gray', alpha=0.5, label="Raw current")
+    ax1.plot(V_raw_samples, I_raw_samples, color='gray', alpha=0.5, label="Raw current")
     ax1.scatter(V_electron_fit, I_electron_fit, label='Measured Electron Current', 
                 c='k', marker='.', s=20, zorder=5, alpha=0.5)
     ax1.plot(V_electron_fit, I_electron_fit, 'r-', linewidth=2, label='GP Mean Fit')
     ax1.fill_between(V_electron_fit, I_electron_fit - 1.96*sigma, I_electron_fit + 1.96*sigma, 
                      color='r', alpha=0.2, label='Uncertainty (type B)')
     ax1.axvline(V_plasma, color='g', linestyle='-.', linewidth=2, 
-                label=f'Plasma Potential $Vp = {V_plasma}$ V')
+                label=f'Plasma Potential $Vp = {V_plasma:.2f}$ V')
     ax1.set_yscale('log')
     ax1.set_ylabel('Electron Current (A)')
     ax1.grid(True, linestyle='--', alpha=0.6)
@@ -175,10 +175,11 @@ def lprobe_plot(data_dict: dict,
     ax2.grid(True, linestyle='--', alpha=0.6)
     # --- Bottom Plot: First and Second Derivatives ---
     ax3_twin = ax3.twinx() # Create a twin y-axis
+    ax3_tripl = ax3.twinx() # Create a triplet y-axis
     # Plot First Derivative on the left axis (ax3)
     p1, = ax3.plot(V_electron_fit, temp_electron, 'm-', linewidth=2, label='$T_e$')
     ax3.set_xlabel('Probe Voltage (V)')
-    ax3.set_ylabel('Electron temperature (eV)', color='m')
+    ax3.set_ylabel('$T_e$ (eV)', color='m')
     ax3.tick_params(axis='y', labelcolor='m')
     ax3.grid(True, linestyle='--', alpha=0.6)
     # Plot Second Derivative on the right axis (ax3_twin)
@@ -186,6 +187,11 @@ def lprobe_plot(data_dict: dict,
     ax3_twin.set_ylabel('$dI/dV$ (A/V)', color='b')
     ax3_twin.tick_params(axis='y', labelcolor='b')
     ax3_twin.set_ylim(bottom=-1e-5)
+
+    p3, = ax3_tripl.plot(V_electron_fit, d2I_dV2, 'b-', linewidth=2, label='$d^2I/dV^2$')
+    ax3_tripl.set_ylabel('$d^2I/dV^2$ (A/V)', color='b')
+    ax3_tripl.tick_params(axis='y', labelcolor='b')
+    ax3_tripl.set_ylim(bottom=-1e-5)
     # Mark the plasma potential
     ax3.axvline(V_plasma, color='g', linestyle='-.', linewidth=2, 
                 label=f'Plasma Potential $V_p = {V_plasma:.2f}$ V')
@@ -215,91 +221,6 @@ def lprobe_plot(data_dict: dict,
 
     return fig
 
-def plot_image_maginals(image_tuple: tuple[np.ndarray, np.ndarray, np.ndarray], 
-                    xlabel:str = 'X-axis',
-                    ylabel:str = 'Y-axis',
-                    title: str = 'Pcolormesh with Marginal Profiles'
-                    ):   
-    '''
-    Plots image as a pcolormesh with the marginal distributions 
-    to the right and to the bottom of the image. 
-
-    :param image_tuple:tuple[np.ndarray, np.ndarray, np.ndarray]
-                        accepts tuple of three numpy arrays. 
-                        X axis samples, Y axis samples, 
-                        and 2D array of intensities.
-    :param xlabel:str sets label of the X axis.
-    :param ylabel:str sets label if the Y axis.
-    :param title:str sets title of the whole plot. 
-    '''   
-    # --- 1. Unpack data ---
-    # x: samples in the x direction (1D array)
-    # y: samples in the y direction (1D array)
-    # Z: image or 2D distribution 
-    x, y, Z = image_tuple
-   
-    # Marginal data (the mean)
-    marginal_x = np.mean(Z, axis=0) # Bottom plot
-    marginal_y = np.mean(Z, axis=1) # Right plot
-
-    # --- 2. Setup the Layout ---
-    # Create a figure
-    fig = plt.figure(figsize=(10, 8))
-    
-    # Define a grid: 2 rows, 2 columns
-    # height_ratios: Main plot is 2x taller than the bottom plot
-    # width_ratios: Main plot is 2x wider than the right plot
-    gs = fig.add_gridspec(2, 2,  width_ratios=(2, 1), height_ratios=(2, 1),
-                          left=0.1, right=0.9, bottom=0.1, top=0.9,
-                          wspace=0.05, hspace=0.05)
-
-    # Define the Axes
-    ax_main = fig.add_subplot(gs[0, 0])
-    ax_right = fig.add_subplot(gs[0, 1], sharey=ax_main)
-    ax_bottom = fig.add_subplot(gs[1, 0], sharex=ax_main)
-
-    # --- 3. Plotting ---
-    
-    # Main 2D Plot
-    im = ax_main.pcolormesh(X, Y, Z, 
-                            shading='auto', cmap='jet')
-    ax_main.set_ylabel(ylabel)
-    
-    # Bottom Marginal (sharing X)
-    ax_bottom.plot(x, marginal_x, color='teal', lw=2)
-    ax_bottom.set_xlabel(xlabel)
-    ax_bottom.grid(True, linestyle='--', alpha=0.6)
-
-    # Right Marginal (sharing Y)
-    ax_right.plot(marginal_y, y, color='purple', lw=2)
-    ax_right.grid(True, linestyle='--', alpha=0.6)
-
-    # --- 4. Cleaning up the UI ---
-    
-    # Hide the tick labels that are redundant due to shared axes
-    plt.setp(ax_main.get_xticklabels(), visible=False)
-    plt.setp(ax_right.get_yticklabels(), visible=False)
-
-    # Add a colorbar
-    # We place it in the bottom-right empty slot of the GridSpec
-    ax_cb = fig.add_subplot(gs[1, 1])
-    ax_cb.axis('off') # Hide the axes of the empty slot
-    fig.colorbar(im, ax=ax_cb, 
-                 aspect=2, fraction=0.3, pad=0)
-
-    fig.suptitle(title, fontsize=14, y=0.95)
-
-    return fig
 
 
 
-
-if __name__=='__main__':
-    set_mpl_style()
-
-    x = np.linspace(-3,3,50)
-    X,Y = np.meshgrid(x,x)
-    img = np.exp(-0.5*(X**2+Y**2))
-    fig = plot_image_maginals((x,x,img))
-    fig.set_size_inches((5,5))
-# %%
