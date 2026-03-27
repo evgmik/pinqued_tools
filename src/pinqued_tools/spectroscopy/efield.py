@@ -5,12 +5,17 @@ from Stark-split Rydberg EIT spectra
 Author: Mykhailo Vorobiov
 '''
 #%%
+from typing import Callable
+
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 import pandas as pd
-from pinqued_tools.spectroscopy.spectroscopy import simulate_spectrum, holtsmarkian, gaussian
+
+from lmfit import Model
+
+from pinqued_tools.spectroscopy.spectrum import simulate_spectrum, holtsmarkian, gaussian
 
 def reference_interp(efield: float,
                   reference: tuple[np.ndarray, np.ndarray],
@@ -55,7 +60,6 @@ def reference_interp(efield: float,
         return f, df_dE, polynomial
     return f, df_dE
 
-
 def read_reference(csv_path: str,
                    amp_rel: list[float]):
     '''
@@ -82,16 +86,14 @@ def read_reference(csv_path: str,
                          'amplitude_relative': amp}
         
     # 6. Add detunings to the `ref_dict` as a dictionary
-    ref_dict['stark_components'] = detunings
+    ref_dict['stark_components'] = detunings # type: ignore
     return ref_dict
-
-
 
 def eit_signal(freq: np.ndarray, # Frequency 
                efield: float, # E-field in units of the reference E-field
                reference_dict: dict,
                params_dict: dict,
-               lineshape_func):
+               lineshape_func: Callable) -> np.ndarray:
     '''
     Simulate EIT signal for a given electric field
     '''
@@ -120,19 +122,39 @@ def eit_signal(freq: np.ndarray, # Frequency
         # calculate interpolated values
         fpos_tuple = reference_interp(efield,
                                       reference=(efield_ref, fpos_ref))
-        fpos, fpos_grad = fpos_tuple
+        fpos, fpos_grad = fpos_tuple # type: ignore
         # calculate line width based on its df/dE and initial width
         width = width_0  - fpos_grad * gradE_dr
         params = {'func': lineshape_func,
                   'width': width, 
                   'fpos': fpos,
                   'amplitude': amp_rel}
-        # add results to dictionary
+        # add resulting dictionary to a list
         spec_lines_dict.append(params)
     
     # 4. Calculate EIT spectrum
     spectrum = scale_factor * simulate_spectrum(freq, spec_lines_dict)
     return spectrum
+
+def fit_spectrum(spectrum_dict: dict):
+    '''
+    Fits a single spectrum using model defined in `eit_signal()`.
+    '''
+    freq = spectrum_dict['freq']
+    spec = spectrum_dict['specrtrum']
+    spec_err = spectrum_dict['spectrum_err']
+    params = spectrum_dict['params_init']
+    # if list of parameters passed perform retro-fitting
+    # including information from the previous results 
+    # to regularize and enforce continuity of the reconstruction
+    if type(params)==list:
+        raise NotImplementedError()
+    # otherwise perform standard least squares fitting
+     
+
+    # NOTE: PICK UP FROM HERE
+    ...
+
 #%%
 if __name__=='__main__':
 
