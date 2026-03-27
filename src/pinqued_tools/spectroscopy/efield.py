@@ -180,7 +180,7 @@ class StarkReference():
         # 3. Define dictionary with frequency detunings only
         self._detunings = {}
         self._detunings_interpolation_domain = {}
-        for amplitude, (key, detuning) in zip(amp_rel, arc_ref.items()):
+        for key, detuning in arc_ref.items():
             original_detuning = np.array(detuning)
             detuning_mirrored = np.flip(original_detuning[1:])
             detuning_interpolation_domain = np.concatenate((detuning_mirrored, original_detuning))
