@@ -6,6 +6,7 @@ Author: Mykhailo Vorobiov
 '''
 #%%
 from typing import Callable
+from dataclasses import dataclass
 
 import numpy as np
 import matplotlib as mpl
@@ -154,6 +155,129 @@ def fit_spectrum(spectrum_dict: dict):
 
     # NOTE: PICK UP FROM HERE
     ...
+
+
+
+class StarkReference():
+    def __init__(self, csv_path: str):
+        '''
+        Reads a file with reference dependence of Stark split positions 
+        of Rydberg levels vs. E-field as calculated by ARC or any other 
+        method. 
+        '''
+        # 1. Read refernce values into a dictionary
+        arc_ref = pd.read_csv(csv_path).to_dict('list')
+
+        # 2. Separate E-field column and create an extended domain for interpolation
+        original_efield_array = np.array(arc_ref['E-field (V/cm)'])
+        efield_mirrored = -np.flip(original_efield_array[1:])
+        self._efield_interpolation_domain = np.concatenate((efield_mirrored, original_efield_array))
+        self._efield = np.array(arc_ref['E-field (V/cm)'])
+
+        # 3. Delete E-field column from the original dictionary
+        del arc_ref['E-field (V/cm)']
+
+        # 3. Define dictionary with frequency detunings only
+        self._detunings = {}
+        self._detunings_interpolation_domain = {}
+        for amplitude, (key, detuning) in zip(amp_rel, arc_ref.items()):
+            original_detuning = np.array(detuning)
+            detuning_mirrored = np.flip(original_detuning[1:])
+            detuning_interpolation_domain = np.concatenate((detuning_mirrored, original_detuning))
+            self._detunings[key] = original_detuning
+            self._detunings_interpolation_domain[key] = detuning_interpolation_domain
+            
+    @property
+    def efield(self) -> np.ndarray:
+        return self._efield
+    
+    @property
+    def detunings(self) -> dict:
+        return self._detunings
+    
+    def interp(self, 
+               efield: float, 
+               atol: float=0.21, 
+               n_interp: int=4) -> list[tuple[float, float]]:
+        '''
+        Interpolates between points of the reference for a given E-field.
+        Calculates 1st derivative of the reference f(E) dependence.
+        '''
+        efield_reference = self._efield
+        detunings_reference = self._detunings_interpolation_domain
+        
+
+        # 3. Extract a portion of the reference that is closest to the E-field
+        #    value `efield` 
+        closest_field = np.isclose(efield, efield_reference, atol=atol)
+        idx_tmp = np.where(closest_field)
+        closest_field_idx = np.min(idx_tmp)
+        lower_lim_field = closest_field_idx - n_interp
+        upper_lim_field = closest_field_idx + n_interp + 1
+
+        x = efield_reference[lower_lim_field:upper_lim_field]
+
+        detunings_interpolated = []
+        for value in detunings_reference.values():
+            
+            y = value[lower_lim_field :upper_lim_field]
+
+        # 4. Interpolate reference values in-between the known values
+        #    using a second degree polynomial and define a polynomial object
+            poly_coefs = np.polyfit(x, y, 2)
+            polynomial = np.poly1d(poly_coefs)
+
+        # 5. Calculate peak position with its 1st and 2nd derivatives wrt E-field
+            f = polynomial(efield) # freq. position at `efield`
+            df_de = polynomial.deriv(1)(efield) # first derivative
+            detunings_interpolated.append((f, df_de))
+
+        return detunings_interpolated
+
+@dataclass
+class Spectrum():
+    '''
+    Data holder for a single spectrum
+    '''
+    signal: np.ndarray
+    frequency: np.ndarray
+
+
+@dataclass
+class StarkMap():
+    '''
+    Data holder for a single Stark map
+    '''
+    signal: np.ndarray
+    frequency: np.ndarray
+    coordinates: np.ndarray
+
+    
+
+
+
+class EFieldReconstruct():
+    def __init__(self,
+                 reference: StarkReference,
+                 data: StarkMap):
+        self.signal = data.signal
+        self.frequency = data.frequency
+        self.coordinates = data.coordinates
+        self.reference = reference
+
+
+    def reference_interp(self, efield: float):
+        pass
+
+    def eit_signal(self, efield: float):
+        pass
+
+    def fit_spectrum1d(self, spectrum_dict: dict):
+        pass
+
+    def fit_spectrum2d(self, spectrum_dict: dict):
+        pass
+
 
 #%%
 if __name__=='__main__':
