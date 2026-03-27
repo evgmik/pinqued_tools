@@ -249,8 +249,8 @@ class StarkMap():
     Data holder for a single Stark map
     '''
     signal: np.ndarray
-    frequency: np.ndarray
     coordinates: np.ndarray
+    frequency: np.ndarray
 
     
 
