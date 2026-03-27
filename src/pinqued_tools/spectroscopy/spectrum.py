@@ -1,3 +1,9 @@
+'''
+Functions for simulation of spectral lineshapes and 
+full spectra from them
+
+Author: Mykhailo Vorobiov
+'''
 #%%
 import numpy as np
 import matplotlib as mpl

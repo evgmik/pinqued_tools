@@ -5,12 +5,17 @@ from Stark-split Rydberg EIT spectra
 Author: Mykhailo Vorobiov
 '''
 #%%
+from typing import Callable
+
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 import pandas as pd
-from pinqued_tools.spectroscopy.spectroscopy import simulate_spectrum, holtsmarkian, gaussian
+
+from lmfit import Model
+
+from pinqued_tools.spectroscopy.spectrum import simulate_spectrum, holtsmarkian, gaussian
 
 def reference_interp(efield: float,
                   reference: tuple[np.ndarray, np.ndarray],
@@ -55,52 +60,101 @@ def reference_interp(efield: float,
         return f, df_dE, polynomial
     return f, df_dE
 
-
 def read_reference(csv_path: str,
-                      amp_rel: list[float]):
+                   amp_rel: list[float]):
+    '''
+    Reads a file with reference dependence of Stark split positions 
+    of Rydberg levels vs. E-field as calculated by ARC or any other 
+    method. 
+    '''
+    # 1. Read refernce values into a dictionary
     arc_ref = pd.read_csv(csv_path).to_dict('list')
+    
+    # 2. Separate E-field column to future use
     efield = np.array(arc_ref['E-field (V/cm)'])
+    
+    # 3. Delete E-field column from the original dictionary
     del arc_ref['E-field (V/cm)']
+
+    # 4. Define new dictionary for output
     ref_dict = {'efield': efield}
+    
+    # 5. Define dictionary with frequency detunings only
     detunings = {}
     for amp, (key, value) in zip(amp_rel, arc_ref.items()):
         detunings[key] = {'freq_detuning': value,
                          'amplitude_relative': amp}
-    ref_dict['stark_components'] = detunings
+        
+    # 6. Add detunings to the `ref_dict` as a dictionary
+    ref_dict['stark_components'] = detunings # type: ignore
     return ref_dict
 
 def eit_signal(freq: np.ndarray, # Frequency 
-               efield: float, # E-field in units of reference E-field
+               efield: float, # E-field in units of the reference E-field
                reference_dict: dict,
                params_dict: dict,
-               lineshape_func):
+               lineshape_func: Callable) -> np.ndarray:
     '''
     Simulate EIT signal for a given electric field
     '''
 
+    # 1. Extract reference E-field and corresponding
+    #    frequency detuning samples (claculated separately)
+    #    into separate variables.
     efield_ref = reference_dict['efield']
     stark_components_ref = reference_dict['stark_components']
 
+    # 2. Define additional model parameters
+    #    `scale_factor` is for overall scaling of the spectrum
+    #    `width_0` is the E=0 line width
+    #    `gradE_dr` is the gradient of E-field time the distance over pixel.
     scale_factor = params_dict['amp']
     width_0 = params_dict['width_0']
     gradE_dr = params_dict['gradE_dr']
 
+    # 3. Calculate interpolated values for each Stark component 
+    #    provided by the reference
     spec_lines_dict = []
+    # iterate over Stark components
     for ref in stark_components_ref.values():
         fpos_ref = ref['freq_detuning']
         amp_rel = ref['amplitude_relative']
+        # calculate interpolated values
         fpos_tuple = reference_interp(efield,
                                       reference=(efield_ref, fpos_ref))
-        fpos, fpos_grad = fpos_tuple
+        fpos, fpos_grad = fpos_tuple # type: ignore
+        # calculate line width based on its df/dE and initial width
         width = width_0  - fpos_grad * gradE_dr
         params = {'func': lineshape_func,
                   'width': width, 
                   'fpos': fpos,
                   'amplitude': amp_rel}
+        # add resulting dictionary to a list
         spec_lines_dict.append(params)
     
+    # 4. Calculate EIT spectrum
     spectrum = scale_factor * simulate_spectrum(freq, spec_lines_dict)
     return spectrum
+
+def fit_spectrum(spectrum_dict: dict):
+    '''
+    Fits a single spectrum using model defined in `eit_signal()`.
+    '''
+    freq = spectrum_dict['freq']
+    spec = spectrum_dict['specrtrum']
+    spec_err = spectrum_dict['spectrum_err']
+    params = spectrum_dict['params_init']
+    # if list of parameters passed perform retro-fitting
+    # including information from the previous results 
+    # to regularize and enforce continuity of the reconstruction
+    if type(params)==list:
+        raise NotImplementedError()
+    # otherwise perform standard least squares fitting
+     
+
+    # NOTE: PICK UP FROM HERE
+    ...
+
 #%%
 if __name__=='__main__':
 
