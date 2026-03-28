@@ -1,6 +1,5 @@
 '''
-Functions for simulation of spectral lineshapes and 
-full spectra from them
+Classses for spectral data storage and processing
 
 Author: Mykhailo Vorobiov
 '''
@@ -9,120 +8,163 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
-
-def gaussian(freq: np.ndarray, 
-             fpos: float = 0.0, # Units of `freq`
-             width: float = 20.0, # Units of `freq`
-             amplitude: float = 1.0,
-             normalized: bool = True) -> np.ndarray:
-    '''
-    Gaussian lineshape
-    '''
-    sigma = width / np.sqrt(8*np.log(2))
-    norm = 1.0 / np.sqrt(2 * np.pi * sigma)
-    shape = np.exp( - 0.5 * ((freq - fpos) / sigma)**2)
-    if normalized:
-        return amplitude * norm * shape
-    return amplitude * shape
+from dataclasses import dataclass, field
+from typing import Dict
+from abc import ABC, abstractmethod
 
 
-def lorentzian(freq: np.ndarray, 
-              fpos: float = 0.0, # Units of `freq`
-              width: float = 20.0, # Units of `freq`
-              amplitude: float = 1.0,
-              normalized: bool = True) -> np.ndarray:
-    '''
-    Lorentzian lineshape
-    '''
-    norm = 2.0 * width / np.pi 
-    shape = 1.0 / (1.0 + (2.0 * (freq - fpos) / width)**2)
-    if normalized:
-        return amplitude * norm * shape
-    return amplitude * shape
+#%%
+default_axis0d_units = {'f': 'MHz'}
+default_axis1d_units = {'x': 'mm', 'f': 'MHz'}
+default_axis2d_units = {'x': 'mm', 'y': 'mm', 'f': 'MHz'}
+default_spectrum_units = {'signal': '%', 'signal_err': '%'}
+
+# -------------------- Axes classes -------------------------
+
+@dataclass 
+class BaseAxes(ABC):
+    """Abstract base class for all Axes dataclasses."""
+    f: np.ndarray # Frequency coordinate
+
+@dataclass
+class Axes0D(BaseAxes):
+    units: Dict[str, str] = field(default_factory=default_axis0d_units)
+
+@dataclass
+class Axes1D(BaseAxes):
+    x: np.ndarray # Spatial coordinate
+    units: Dict[str, str] = field(default_factory=default_axis1d_units)
+
+@dataclass
+class Axes2D(BaseAxes):
+    x: np.ndarray # Spatial coordinate x
+    y: np.ndarray # Spatial coordinate y
+    units: Dict[str, str] = field(default_factory=default_axis2d_units)
 
 
-def holtsmarkian(freq: np.ndarray, 
-                fpos: float = 0.0, # Units of `freq`
-                width: float = 20.0, # Units of `freq`
-                amplitude: float = 1.0,
-                normalized: bool = True) -> np.ndarray:
-    '''
-    Holtsmark lineshape
-    '''
-    norm = (5.0/(2.0*np.pi))*np.sin(2.0*np.pi/5) / width
-    arg = (2 * np.abs(freq - fpos) / width)**(2.5)
-    shape = 1.0 / (1.0 + arg)
-    if normalized:
-        return amplitude * norm * shape
-    return amplitude * shape
 
-def lineshape(freq: np.ndarray, 
-              params: dict):
-    '''
-    Any lineshape depending that is defined above
-    the function itself must be passed as e.g. `func: lorentzian`
-    '''
-    # Extract spectral lineshape function from dictioary
-    shape_function = params['func']  
-    # remove spectral lineshape function `params` dict 
-    function_parameters = {k: v for k, v in params.items() if k != 'func'}
-    # Use `shape_function` to generate lineshape using `function_parameters`
-    return shape_function(freq, **function_parameters)
 
-def simulate_spectrum(freq: np.ndarray, 
-                      params: list[dict],
-                      return_shapes: bool = False) -> dict|np.ndarray:
+
+
+# ----------------- Spectral Data classes -----------------
+@dataclass
+class BaseSpectralData(ABC):
+    """Abstract base class for all spectral data types."""
+    signal: np.ndarray
+    signal_err: np.ndarray
+    axes: BaseAxes
+    units: Dict[str, str] = field(default_factory=default_spectrum_units)
+    metadata: dict|None = None
+
+@dataclass
+class Spectrum(BaseSpectralData):
     '''
-    Simulates a spectrum based on the set of lineshapes provided as functions
-    withing the list of dictionaries `params`. If `return_shapes` is True, then 
-    the function returns dict with the following entries:
-     'shapes_list' containing separate spectral lines
-     'spectrum' sum of the spectral lines i.e. total spectrum.
-    Otherwise, only total spectrum is returned as an numpy array.
+    Class stores a signle spectrum
     '''
-    spectrum = np.zeros_like(freq)
-    for p in params:
-        spectrum += lineshape(freq, p)
-    if return_shapes:
-        shapes = []
-        for p in params:
-            shape = lineshape(freq, p)
-            shapes.append(shape)
-        return {'spectrum': spectrum, 'shapes_list': shapes}
-    return spectrum
+    def __post_init__(self):
+        if not isinstance(self.axes, Axes0D):
+            raise TypeError(f"axes must be of type Axes0D, not {type(self.axes)}")
+
+@dataclass
+class SpectralStrip(BaseSpectralData):
+    '''
+    Class stores a single spectrum strip
+    '''
+    def __post_init__(self):
+        if not isinstance(self.axes, Axes1D):
+            raise TypeError(f"axes must be of type Axes1D, not {type(self.axes)}")
+
+@dataclass
+class SpectralCube(BaseSpectralData):
+    '''
+    Class stores a spectral cube
+    '''
+    def __post_init__(self):
+        if not isinstance(self.axes, Axes2D):
+            raise TypeError(f"axes must be of type Axes2D, not {type(self.axes)}")
+
+
+
+
+# ------------------ Classes for processing Spectral Data -------------------
+class SpectrumProcessor():
+    '''
+    Class for processing individual spectra 
+    '''
+    def __init__(self, 
+                 spectrum: Spectrum):
+        # Store a reference to the original spectrum object to avoid copying
+        self._spectrum = spectrum
+
+    @property
+    def data(self):
+        # Return a copy if modifications are made, or the original if not.
+        # For now, returning the original reference.
+        return self._spectrum
+    
+    def remove_baseline(self):
+        pass
+
+    def denoise_svd(self):
+        pass
+
+class CubePreporcessor():
+    '''
+    Class for pre-processing a SpectralCube object 
+    '''
+    def __init__(self,
+                 cube: SpectralCube):
+        pass
+
+class CubeProcessor():
+    '''
+    Class for processing a SpectralCube object 
+    '''
+    def __init__(self,
+                 cube: SpectralCube):
+        # Store a reference to the original cube object to avoid copying
+        self._cube = cube
+
+    @property
+    def data(self):
+        # Return a copy if modifications are made, or the original if not.
+        # For now, returning the original reference.
+        return self._cube
+
+    def bin_spatial(self,
+                    px_per_bin: int = 2,
+                    axis: int = 1):
+        if axis > 1 or axis < 0:
+            raise ValueError("Axis must be 0 (x) or 1 (y) for 2D spatial binning.")
+        
+        # Create new binned data and axes, rather than modifying in place
+        # This example assumes simple slicing for binning, more complex binning
+        # would involve averaging/summing.
+        new_signal = self._cube.signal[::px_per_bin, :, :] if axis == 0 else self._cube.signal[:, ::px_per_bin, :]
+        new_signal_err = self._cube.signal_err[::px_per_bin, :, :] if axis == 0 else self._cube.signal_err[:, ::px_per_bin, :]
+        
+        new_x = self._cube.axes.x[::px_per_bin] if axis == 0 else self._cube.axes.x
+        new_y = self._cube.axes.y[::px_per_bin] if axis == 1 else self._cube.axes.y
+
+        new_axes = Axes2D(x=new_x, y=new_y, f=self._cube.axes.f, units=self._cube.axes.units)
+        return SpectralCube(signal=new_signal, 
+                            signal_err=new_signal_err, 
+                            units=self._cube.units, 
+                            axes=new_axes,
+                            metadata=self._cube.metadata)
+
+    def get_spectrum(self, x=None, y=None):
+        if x is not None and y is not None:
+            # Correctly construct Axes0D for the returned Spectrum
+            axes = Axes0D(f=self._cube.axes.f)
+            return Spectrum(signal=self._cube.signal[x,y], signal_err=self._cube.signal_err[x,y], axes=axes, units=self._cube.units, metadata=self._cube.metadata)
+        
+    def get_subcube(self):
+        raise NotImplementedError()
+
+
 
 #%%
 if __name__=='__main__':
-    # Apply custom plotting style
-    from pinqued_tools.analysis.plotting import set_mpl_style
-    set_mpl_style()
-
-    # 1. Define list with parameters for each spectral line
-    params = [
-        {'func': gaussian, #<---- NOTE: spectral line function is a dict entry
-         'fpos': 0.0,
-         'width': 20,
-         'normalized': False},
-        {'func': lorentzian, 
-         'fpos': 0.0,
-         'width': 20,
-         'normalized': False},
-        {'func': holtsmarkian, 
-         'fpos': 0.0,
-         'width': 20,
-         'normalized': False},
-    ]
-
-    # 2. Frequency detunings -100 to 100 MHz
-    x = np.linspace(-100,100,1000)
-
-    # 3. Plot all available spectral lines
-    labels = ['Gauss', 'Lorentz', 'Holtsmark']
-    fig, ax = plt.subplots()
-    for p, ll in zip(params, labels):
-        y = lineshape(x, p) # Calculate spectral lineshape
-        ax.plot(x,y, linewidth=1.5, label=ll)
-    ax.set_xlabel('Frequency (MHz)')
-    ax.set_ylabel('EIT Signal $S$ (arb. units)')
-    ax.legend()
+    pass
 # %%
