@@ -109,6 +109,7 @@ class SpectralDataProcessor():
         '''
         Private fucntion to calcualte errors for binned 1d signal array
         '''
+        # Propagate error when the signal samples are binned
         n = array.shape[0]
         arr_reshaped = array.reshape(n // px_per_bin, px_per_bin, *array.shape[1:])
         return np.sqrt(np.sum(arr_reshaped**2, axis=1))
@@ -161,10 +162,12 @@ class SpectralDataProcessor():
 
 #%%
 if __name__=='__main__':
+    # ------------------  Usage example ----------------
     from datetime import datetime
-
     from pinqued_tools.analysis.plotting import set_mpl_style
     set_mpl_style()
+
+    # Create mock data
     sdata0 = SpectralData(signal=10 + np.random.poisson(lam=100, size=256)*10.1,
                           signal_err=np.sqrt(100 + np.random.poisson(lam=100, size=256)*10.1),
                          axes=Axes0D(f=np.linspace(0,10,256)),
@@ -173,23 +176,25 @@ if __name__=='__main__':
                          axes=Axes1D(x=np.linspace(0,10,256), 
                                      f=np.linspace(0,100,256)))
 
+    # Process data
     sproc = SpectralDataProcessor(sdata0)
     sproc.remove_fmean()
     sproc.bin(px_per_bin=2, axis=0)
     sdata_new = sproc.data
 
-    print(sdata_new)
-
+    # Plot 0D (single spectrum)
     fig, ax = plt.subplots()
-    ax.plot(sdata0.axes.f, sdata0.signal)
-    ax.errorbar(x=sdata0.axes.f, y=sdata0.signal, yerr=sdata0.signal_err, linestyle='None')
-    ax.plot(sdata_new.axes.f, sdata_new.signal)
-    ax.errorbar(x=sdata_new.axes.f, y=sdata_new.signal, yerr=sdata_new.signal_err, linestyle='None')
+    ax.errorbar(x=sdata0.axes.f, y=sdata0.signal, yerr=sdata0.signal_err, 
+                linestyle='None', marker='o', markersize=2, alpha=0.6)
+    ax.errorbar(x=sdata_new.axes.f, y=sdata_new.signal, yerr=sdata_new.signal_err, 
+                linestyle='None', marker='v', markersize=2, alpha=0.6)
+    ax.set_xlabel(f'Detuning $\Delta_c$ ({sdata.axes.units['f']})')
+    ax.set_ylabel(f'EIT Signal $S$ ({sdata.units['signal']})')
 
-
+    # Plot 1D (spatial-frequnecy map)
     fig, ax = plt.subplots()
-    ax.pcolormesh(sdata.axes.x, sdata.axes.f, sdata.signal)
-    ax.set_xlabel(sdata.axes.units['x'])
-    ax.set_ylabel(sdata.axes.units['f'])
+    ax.pcolormesh(sdata.axes.x, sdata.axes.f, sdata.signal, cmap='jet')
+    ax.set_xlabel(f'Position $x$ ({sdata.axes.units['x']})')
+    ax.set_ylabel(f'Detuning $\Delta_c$ ({sdata.axes.units['f']})')
 
 # %%
