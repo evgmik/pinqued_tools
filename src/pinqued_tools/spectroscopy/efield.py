@@ -1,5 +1,5 @@
 '''
-Contains functions for electric field reconstruction
+Contains classes for electric field reconstruction
 from Stark-split Rydberg EIT spectra 
 
 Author: Mykhailo Vorobiov
@@ -14,159 +14,34 @@ import matplotlib.pyplot as plt
 
 import pandas as pd
 
-def reference_interp(efield: float,
-                  reference: tuple[np.ndarray, np.ndarray],
-                  n_interp: int = 4, 
-                  atol: float = 0.21,
-                  return_polynomial: bool = False
-                  ):
-    '''
-    Interpolates between points of the reference for a given E-field.
-    Calculates 1st derivative of the reference f(E) dependence.
-    '''
-    # 1. Unpack samples of the reference E-field and peak positions
-    efield_reference, peak_pos_reference = reference
-
-    # 2. Stack a mirrored reference to avoid boundary effects
-    mirror_ref_field = -np.flip(efield_reference[1:])
-    mirror_peak_pos = np.flip(peak_pos_reference[1:])
-    efield_reference = np.concatenate((mirror_ref_field, efield_reference))
-    peak_pos_reference = np.concatenate((mirror_peak_pos, peak_pos_reference))
-
-    # 3. Extract a portion of the reference that is closest to the E-field
-    #    value `efield` 
-    closest_field = np.isclose(efield, efield_reference, atol=atol)
-    idx_tmp = np.where(closest_field)
-    closest_field_idx = np.min(idx_tmp)
-    lower_lim_field = closest_field_idx - n_interp
-    upper_lim_field = closest_field_idx + n_interp + 1
-
-    x = efield_reference[lower_lim_field:upper_lim_field]
-    y = peak_pos_reference[lower_lim_field :upper_lim_field]
-
-    # 4. Interpolate reference values in-between the known with a 
-    #    second degree polynomial and define a polynomial object
-    poly_coefs = np.polyfit(x, y, 2)
-    polynomial = np.poly1d(poly_coefs)
-    
-    # 5. Calculate peak position with its 1st and 2nd derivatives wrt E-field
-    f = polynomial(efield) # freq. position at `efield`
-    df_dE = polynomial.deriv(1)(efield) # first derivative
-
-    if return_polynomial:
-        return f, df_dE, polynomial
-    return f, df_dE
-
-def read_reference(csv_path: str,
-                   amp_rel: list[float]):
-    '''
-    Reads a file with reference dependence of Stark split positions 
-    of Rydberg levels vs. E-field as calculated by ARC or any other 
-    method. 
-    '''
-    # 1. Read refernce values into a dictionary
-    arc_ref = pd.read_csv(csv_path).to_dict('list')
-    
-    # 2. Separate E-field column to future use
-    efield = np.array(arc_ref['E-field (V/cm)'])
-    
-    # 3. Delete E-field column from the original dictionary
-    del arc_ref['E-field (V/cm)']
-
-    # 4. Define new dictionary for output
-    ref_dict = {'efield': efield}
-    
-    # 5. Define dictionary with frequency detunings only
-    detunings = {}
-    for amp, (key, value) in zip(amp_rel, arc_ref.items()):
-        detunings[key] = {'freq_detuning': value,
-                         'amplitude_relative': amp}
-        
-    # 6. Add detunings to the `ref_dict` as a dictionary
-    ref_dict['stark_components'] = detunings # type: ignore
-    return ref_dict
-
-def eit_signal(freq: np.ndarray, # Frequency 
-               efield: float, # E-field in units of the reference E-field
-               reference_dict: dict,
-               params_dict: dict,
-               lineshape_func: Callable) -> np.ndarray:
-    '''
-    Simulate EIT signal for a given electric field
-    '''
-
-    # 1. Extract reference E-field and corresponding
-    #    frequency detuning samples (claculated separately)
-    #    into separate variables.
-    efield_ref = reference_dict['efield']
-    stark_components_ref = reference_dict['stark_components']
-
-    # 2. Define additional model parameters
-    #    `scale_factor` is for overall scaling of the spectrum
-    #    `width_0` is the E=0 line width
-    #    `gradE_dr` is the gradient of E-field time the distance over pixel.
-    scale_factor = params_dict['amp']
-    width_0 = params_dict['width_0']
-    gradE_dr = params_dict['gradE_dr']
-
-    # 3. Calculate interpolated values for each Stark component 
-    #    provided by the reference
-    spec_lines_dict = []
-    # iterate over Stark components
-    for ref in stark_components_ref.values():
-        fpos_ref = ref['freq_detuning']
-        amp_rel = ref['amplitude_relative']
-        # calculate interpolated values
-        fpos_tuple = reference_interp(efield,
-                                      reference=(efield_ref, fpos_ref))
-        fpos, fpos_grad = fpos_tuple # type: ignore
-        # calculate line width based on its df/dE and initial width
-        width = width_0  - fpos_grad * gradE_dr
-        params = {'func': lineshape_func,
-                  'width': width, 
-                  'fpos': fpos,
-                  'amplitude': amp_rel}
-        # add resulting dictionary to a list
-        spec_lines_dict.append(params)
-    
-    # 4. Calculate EIT spectrum
-    spectrum = scale_factor * simulate_spectrum(freq, spec_lines_dict)
-    return spectrum
-
-def fit_spectrum(spectrum_dict: dict):
-    '''
-    Fits a single spectrum using model defined in `eit_signal()`.
-    '''
-    freq = spectrum_dict['freq']
-    spec = spectrum_dict['specrtrum']
-    spec_err = spectrum_dict['spectrum_err']
-    params = spectrum_dict['params_init']
-    # if list of parameters passed perform retro-fitting
-    # including information from the previous results 
-    # to regularize and enforce continuity of the reconstruction
-    if type(params)==list:
-        raise NotImplementedError()
-    # otherwise perform standard least squares fitting
-     
-
-    # NOTE: PICK UP FROM HERE
-    ...
-
-
+from pinqued_tools.spectroscopy.lineshapes import gaussian, lorentzian, holtsmarkian
 
 class FieldReference():
-    def __init__(self, csv_path: str):
+    '''
+    Class reads Rydberg levels positions vs E-field and interpolate 
+    between calculated values for arbitrary field within the valid reference range.
+    Additionally calculates gradient df/dE to account for Stark broadening.
+    '''
+    def __init__(self, 
+                 csv_path: str,
+                 atol = 0.3,
+                 n_interp = 4):
         '''
         Reads a file with reference dependence of Stark split positions 
         of Rydberg levels vs. E-field as calculated by ARC or any other 
         method. 
         '''
+
+        self._atol = atol
+        self._n_interp = n_interp
+
         # 1. Read refernce values into a dictionary
         arc_ref = pd.read_csv(csv_path).to_dict('list')
 
         # 2. Separate E-field column and create an extended domain for interpolation
         original_efield_array = np.array(arc_ref['E-field (V/cm)'])
         efield_mirrored = -np.flip(original_efield_array[1:])
+
         self._efield_interpolation_domain = np.concatenate((efield_mirrored, original_efield_array))
         self._efield = np.array(arc_ref['E-field (V/cm)'])
 
@@ -191,31 +66,31 @@ class FieldReference():
     def detunings(self) -> Dict[str, np.ndarray]:
         return self._detunings
     
-    def interp(self, 
-               efield: float, 
-               atol: float=0.21, 
-               n_interp: int=4) -> list[tuple[float, float]]:
+    @property
+    def level_labels(self) -> list[str]:
+        return list(self._detunings.keys())
+    
+    def interp(self, efield: float) -> list[tuple[float, float]]:
         '''
         Interpolates between points of the reference for a given E-field.
         Calculates 1st derivative of the reference f(E) dependence.
         '''
-        efield_reference = self._efield
+        efield_reference = self._efield_interpolation_domain
         detunings_reference = self._detunings_interpolation_domain
         
 
         # 3. Extract a portion of the reference that is closest to the E-field
         #    value `efield` 
-        closest_field = np.isclose(efield, efield_reference, atol=atol)
+        closest_field = np.isclose(efield, efield_reference, atol=self._atol)
         idx_tmp = np.where(closest_field)
         closest_field_idx = np.min(idx_tmp)
-        lower_lim_field = closest_field_idx - n_interp
-        upper_lim_field = closest_field_idx + n_interp + 1
+        lower_lim_field = closest_field_idx - self._n_interp
+        upper_lim_field = closest_field_idx + self._n_interp + 1
 
         x = efield_reference[lower_lim_field:upper_lim_field]
 
         detunings_interpolated = []
         for value in detunings_reference.values():
-            
             y = value[lower_lim_field :upper_lim_field]
 
         # 4. Interpolate reference values in-between the known values
@@ -230,17 +105,81 @@ class FieldReference():
 
         return detunings_interpolated
 
-
 class SignalSimulator():
-    def __init__(self, reference: FieldReference):
-        pass
+    '''
+    Class that based on the Rydberg levels Stark splitting 
+    from generated by the `FieldReference` class simulates EIT spectra.
+    '''
+    def __init__(self, 
+                 reference: FieldReference, 
+                 lineshape_func: Callable
+                 ):
+        self._reference = reference
+        self._params = params
+        self._lineshape_func = lineshape_func
+       
 
-    def model(self,):
-        pass
+    def signal(self, 
+               freq: np.ndarray, 
+               params: dict,
+               **kwargs):
+        '''
+        Simulate EIT signal for a given electric field
+        '''
+        scale_factor = self._params['amp']
+        width_0 = self._params['width_0']
+        gradE_dr = self._params['gradE_dr']
+        efield = params['efield']
+        r_amp = params.get('r_amp', None)
 
 
+        ref = self._reference.interp(efield)
+
+        spectrum = np.zeros_like(freq)
+        if r_amp is not None and len(r_amp) == len(ref):
+            for (fpos, df_de), amp in zip(ref, r_amp):
+                width = width_0  - df_de * gradE_dr
+                spectrum += amp*self._lineshape_func(freq, fpos, width, **kwargs)
+        else:
+            for (fpos, df_de) in ref:
+                width = width_0  - df_de * gradE_dr
+                spectrum += self._lineshape_func(freq, fpos, width, **kwargs)
+        spectrum *= scale_factor
+        return spectrum
 
 #%%
 if __name__=='__main__':
-    pass
+    # ----------------- Usage example ----------------------
+    
+    # Read reference Rydberg splittings
+    ref_path = 'G:\\My Drive\\Vaults\\WnM-AMO\\__Scripts\\calculated_stark_maps\\stark_map_35D_MHz.csv'
+    ref = FieldReference(ref_path)
+
+    # define parameters of the spectrum
+    params = {'efield': 7.0,
+              'amp': 150, 
+              'width_0': 30, 
+              'gradE_dr': 2,
+              'rel_amp': [0.6, 0.6, 1.0, 1.0, 1.0]}
+    
+    # Instantiate signal simulator object
+    sim = SignalSimulator(ref, holtsmarkian)
+
+    # generate detunings
+    freq = np.linspace(200, -1000, 700)
+
+    # Simulate signal
+    signal = sim.signal(freq, params=params, normalized=True)
+
+    # Plot results
+    fig, ax = plt.subplots(figsize=(4,2))
+    ax.set_title(f'Simulated EIT spectrum ($E = ${params["efield"]:.2} V/cm)')
+    ax.plot(freq, signal, linewidth=1.5)
+    ax.fill_betweenx(y=signal, x1=freq, x2=0, color='C0', alpha=0.2)
+    ef =  ref.interp(params['efield'])
+    for label, amp, (fpos, _) in zip(ref.level_labels, params['rel_amp'], ef):
+        ax.axvline(x=fpos, color='C3', linestyle='--')
+    ax.set_xlabel('Detuning (MHz)')
+    ax.set_ylabel('EIT Signal $S$ (%)')
+
 # %%
