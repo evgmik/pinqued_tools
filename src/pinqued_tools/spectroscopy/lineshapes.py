@@ -3,11 +3,13 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
-def gaussian(freq: np.ndarray, 
+from numpy.typing import NDArray
+
+def gaussian(freq: NDArray, 
              fpos: float = 0.0, # Units of `freq`
              width: float = 20.0, # Units of `freq`
              amplitude: float = 1.0,
-             normalized: bool = True) -> np.ndarray:
+             normalized: bool = True) -> NDArray:
     '''
     Gaussian lineshape
     '''
@@ -19,11 +21,11 @@ def gaussian(freq: np.ndarray,
     return amplitude * shape
 
 
-def lorentzian(freq: np.ndarray, 
+def lorentzian(freq: NDArray, 
               fpos: float = 0.0, # Units of `freq`
               width: float = 20.0, # Units of `freq`
               amplitude: float = 1.0,
-              normalized: bool = True) -> np.ndarray:
+              normalized: bool = True) -> NDArray:
     '''
     Lorentzian lineshape
     '''
@@ -34,11 +36,11 @@ def lorentzian(freq: np.ndarray,
     return amplitude * shape
 
 
-def holtsmarkian(freq: np.ndarray, 
+def holtsmarkian(freq: NDArray, 
                 fpos: float = 0.0, # Units of `freq`
                 width: float = 20.0, # Units of `freq`
                 amplitude: float = 1.0,
-                normalized: bool = True) -> np.ndarray:
+                normalized: bool = True) -> NDArray:
     '''
     Holtsmark lineshape
     '''
@@ -49,7 +51,7 @@ def holtsmarkian(freq: np.ndarray,
         return amplitude * norm * shape
     return amplitude * shape
 
-def lineshape(freq: np.ndarray, 
+def lineshape(freq: NDArray, 
               params: dict):
     '''
     Any lineshape depending that is defined above
@@ -62,9 +64,9 @@ def lineshape(freq: np.ndarray,
     # Use `shape_function` to generate lineshape using `function_parameters`
     return shape_function(freq, **function_parameters)
 
-def simulate_spectrum(freq: np.ndarray, 
+def simulate_spectrum(freq: NDArray, 
                       params: list[dict],
-                      return_shapes: bool = False) -> dict|np.ndarray:
+                      return_shapes: bool = False) -> dict|NDArray:
     '''
     Simulates a spectrum based on the set of lineshapes provided as functions
     withing the list of dictionaries `params`. If `return_shapes` is True, then 
