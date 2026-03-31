@@ -12,15 +12,10 @@ from dataclasses import dataclass, field
 from typing import Dict
 from abc import ABC, abstractmethod
 
+from pinqued_tools.spectroscopy.efield import FieldReference
 
 #%%
-default_axis0d_units = {'f': 'MHz'}
-default_axis1d_units = {'x': 'mm', 'f': 'MHz'}
-default_axis2d_units = {'x': 'mm', 'y': 'mm', 'f': 'MHz'}
-default_spectrum_units = {'signal': '%', 'signal_err': '%'}
-
 # -------------------- Axes classes -------------------------
-
 @dataclass 
 class BaseAxes(ABC):
     """Abstract base class for all Axes dataclasses."""
@@ -28,36 +23,31 @@ class BaseAxes(ABC):
 
 @dataclass
 class Axes0D(BaseAxes):
-    units: Dict[str, str] = field(default_factory=default_axis0d_units)
+    units: Dict[str, str] = field(default_factory=lambda: {'f': 'MHz'})
 
 @dataclass
 class Axes1D(BaseAxes):
     x: np.ndarray # Spatial coordinate
-    units: Dict[str, str] = field(default_factory=default_axis1d_units)
+    units: Dict[str, str] = field(default_factory=lambda: {'x': 'mm', 'f': 'MHz'})
 
 @dataclass
 class Axes2D(BaseAxes):
     x: np.ndarray # Spatial coordinate x
     y: np.ndarray # Spatial coordinate y
-    units: Dict[str, str] = field(default_factory=default_axis2d_units)
-
-
-
-
-
+    units: Dict[str, str] = field(default_factory=lambda: {'x': 'mm', 'y': 'mm', 'f': 'MHz'})
 
 # ----------------- Spectral Data classes -----------------
 @dataclass
 class BaseSpectralData(ABC):
     """Abstract base class for all spectral data types."""
     signal: np.ndarray
-    signal_err: np.ndarray
     axes: BaseAxes
-    units: Dict[str, str] = field(default_factory=default_spectrum_units)
+    signal_err: np.ndarray|None = None
+    units: Dict[str, str] = field(default_factory=lambda: {'signal': '%', 'signal_err': '%'})
     metadata: dict|None = None
 
 @dataclass
-class Spectrum(BaseSpectralData):
+class SpectralDataSpec(BaseSpectralData):
     '''
     Class stores a signle spectrum
     '''
@@ -66,7 +56,7 @@ class Spectrum(BaseSpectralData):
             raise TypeError(f"axes must be of type Axes0D, not {type(self.axes)}")
 
 @dataclass
-class SpectralStrip(BaseSpectralData):
+class SpectralDataStrip(BaseSpectralData):
     '''
     Class stores a single spectrum strip
     '''
@@ -75,7 +65,7 @@ class SpectralStrip(BaseSpectralData):
             raise TypeError(f"axes must be of type Axes1D, not {type(self.axes)}")
 
 @dataclass
-class SpectralCube(BaseSpectralData):
+class SpectralDataCube(BaseSpectralData):
     '''
     Class stores a spectral cube
     '''
@@ -84,17 +74,41 @@ class SpectralCube(BaseSpectralData):
             raise TypeError(f"axes must be of type Axes2D, not {type(self.axes)}")
 
 
-
-
 # ------------------ Classes for processing Spectral Data -------------------
-class SpectrumProcessor():
+class BaseSpectralDataProcessor(ABC):
+    """Abstract base class for spectral data processors."""
+    def __init__(self, 
+                 data: BaseSpectralData):
+        super().__init__()
+        self._data = data
+
+    @property
+    def data(self):
+        return self._data
+
+    def remove_baseline(self):
+        pass
+
+    def denoise_svd(self):
+        pass
+
+
+class SpecProcessor(BaseSpectralDataProcessor):
     '''
     Class for processing individual spectra 
     '''
     def __init__(self, 
-                 spectrum: Spectrum):
+                 data: SpectralDataSpec):
         # Store a reference to the original spectrum object to avoid copying
-        self._spectrum = spectrum
+        self._spectrum = data
+
+
+        self._signal = data.signal
+        self._signal_err = data.signal_err
+        self._axes = data.axes
+        self._units = data.units
+        self._metadata = data.metadata
+
 
     @property
     def data(self):
@@ -108,20 +122,15 @@ class SpectrumProcessor():
     def denoise_svd(self):
         pass
 
-class CubePreporcessor():
-    '''
-    Class for pre-processing a SpectralCube object 
-    '''
-    def __init__(self,
-                 cube: SpectralCube):
-        pass
+class StripProcessor(BaseSpectralDataProcessor):
+    pass
 
-class CubeProcessor():
+class CubeProcessor(BaseSpectralDataProcessor):
     '''
     Class for processing a SpectralCube object 
     '''
     def __init__(self,
-                 cube: SpectralCube):
+                 cube: SpectralDataCube):
         # Store a reference to the original cube object to avoid copying
         self._cube = cube
 
@@ -147,7 +156,7 @@ class CubeProcessor():
         new_y = self._cube.axes.y[::px_per_bin] if axis == 1 else self._cube.axes.y
 
         new_axes = Axes2D(x=new_x, y=new_y, f=self._cube.axes.f, units=self._cube.axes.units)
-        return SpectralCube(signal=new_signal, 
+        return SpectralDataCube(signal=new_signal, 
                             signal_err=new_signal_err, 
                             units=self._cube.units, 
                             axes=new_axes,
@@ -157,7 +166,7 @@ class CubeProcessor():
         if x is not None and y is not None:
             # Correctly construct Axes0D for the returned Spectrum
             axes = Axes0D(f=self._cube.axes.f)
-            return Spectrum(signal=self._cube.signal[x,y], signal_err=self._cube.signal_err[x,y], axes=axes, units=self._cube.units, metadata=self._cube.metadata)
+            return SpectralDataSpec(signal=self._cube.signal[x,y], signal_err=self._cube.signal_err[x,y], axes=axes, units=self._cube.units, metadata=self._cube.metadata)
         
     def get_subcube(self):
         raise NotImplementedError()
