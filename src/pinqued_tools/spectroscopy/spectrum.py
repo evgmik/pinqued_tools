@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 from dataclasses import dataclass, field, fields, asdict
 from typing import Dict
+from numpy.typing import NDArray
 from abc import ABC, abstractmethod
 import copy
 
@@ -21,7 +22,7 @@ from pinqued_tools.analysis.plotting import *
 @dataclass 
 class BaseAxes(ABC):
     """Abstract base class for all Axes dataclasses."""
-    f: np.ndarray # Frequency coordinate
+    f: NDArray # Frequency coordinate
 
 @dataclass
 class Axes0D(BaseAxes):
@@ -29,13 +30,13 @@ class Axes0D(BaseAxes):
 
 @dataclass
 class Axes1D(BaseAxes):
-    x: np.ndarray # Spatial coordinate
+    x: NDArray # Spatial coordinate
     units: Dict[str, str] = field(default_factory=lambda: {'x': 'mm', 'f': 'MHz'})
 
 @dataclass
 class Axes2D(BaseAxes):
-    x: np.ndarray # Spatial coordinate x
-    y: np.ndarray # Spatial coordinate y
+    x: NDArray # Spatial coordinate x
+    y: NDArray # Spatial coordinate y
     units: Dict[str, str] = field(default_factory=lambda: {'x': 'mm', 'y': 'mm', 'f': 'MHz'})
 
 # ----------------- Spectral Data classes -----------------
@@ -44,9 +45,9 @@ class SpectralData():
     '''
     Class stores any set of spectral data
     '''
-    signal: np.ndarray
+    signal: NDArray
     axes: BaseAxes
-    signal_err: np.ndarray|None = None
+    signal_err: NDArray|None = None
     units: Dict[str, str] = field(default_factory=lambda: {'signal': '%', 'signal_err': '%'})
     metadata: dict|None = None
     def __post_init__(self):
@@ -79,7 +80,7 @@ class SpectralDataProcessor():
     def data(self,) -> SpectralData:
         return self._data
 
-    def remove_fmean(self, samples = range(10)):
+    def remove_fmean(self, samples = range(10)) -> None:
         '''
         Removes mean value of the selected samples calculated along the frequency axis.
         '''
@@ -97,7 +98,7 @@ class SpectralDataProcessor():
         else:
             self._data.metadata = {'fmean': f'Subtracted mean of f {samples.shape[0]}'}
 
-    def _bin(self, array, px_per_bin: int):
+    def _bin(self, array, px_per_bin: int) -> NDArray:
         '''
         Private fucntion to bin a 1d signal array
         '''
@@ -105,7 +106,7 @@ class SpectralDataProcessor():
         arr_reshaped = array.reshape(n // px_per_bin, px_per_bin, *array.shape[1:])
         return np.mean(arr_reshaped, axis=1)
     
-    def _bin_error(self, array, px_per_bin: int):
+    def _bin_error(self, array, px_per_bin: int) -> NDArray:
         '''
         Private fucntion to calcualte errors for binned 1d signal array
         '''
@@ -115,8 +116,8 @@ class SpectralDataProcessor():
         return np.sqrt(np.sum(arr_reshaped**2, axis=1))
 
     def bin(self,
-                    px_per_bin: int = 2,
-                    axis: int = 0):
+            px_per_bin: int = 2,
+            axis: int = 0) -> None:
         '''
         Performs spatial binning of the spectral data.
         So far limited to axis arrays with dimenstions propto powers of 2
