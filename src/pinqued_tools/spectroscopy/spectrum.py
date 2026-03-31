@@ -14,10 +14,6 @@ from numpy.typing import NDArray
 from abc import ABC, abstractmethod
 import copy
 
-from pinqued_tools.spectroscopy.efield import FieldReference
-
-from pinqued_tools.analysis.plotting import *
-
 # -------------------- Axes classes -------------------------
 @dataclass 
 class BaseAxes(ABC):
