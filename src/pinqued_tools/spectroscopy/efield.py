@@ -15,8 +15,6 @@ import matplotlib.pyplot as plt
 
 import pandas as pd
 
-from pinqued_tools.spectroscopy.lineshapes import gaussian, lorentzian, holtsmarkian
-
 class FieldReference():
     '''
     Class reads Rydberg levels positions vs E-field and interpolate 
@@ -151,7 +149,10 @@ class SignalSimulator():
 #%%
 if __name__=='__main__':
     # ----------------- Usage example ----------------------
-    
+    from pinqued_tools.spectroscopy.lineshapes import holtsmarkian
+    from pinqued_tools.analysis.plotting import set_mpl_style
+    set_mpl_style()
+
     # Read reference Rydberg splittings
     ref_path = 'G:\\My Drive\\Vaults\\WnM-AMO\\__Scripts\\calculated_stark_maps\\stark_map_35D_MHz.csv'
     ref = FieldReference(ref_path)
