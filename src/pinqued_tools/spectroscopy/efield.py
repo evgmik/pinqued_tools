@@ -5,7 +5,7 @@ from Stark-split Rydberg EIT spectra
 Author: Mykhailo Vorobiov
 '''
 #%%
-from typing import Callable
+from typing import Callable, Dict
 from dataclasses import dataclass
 
 import numpy as np
@@ -13,10 +13,6 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 import pandas as pd
-
-from lmfit import Model
-
-from pinqued_tools.spectroscopy.spectrum import simulate_spectrum, holtsmarkian, gaussian
 
 def reference_interp(efield: float,
                   reference: tuple[np.ndarray, np.ndarray],
@@ -158,7 +154,7 @@ def fit_spectrum(spectrum_dict: dict):
 
 
 
-class StarkReference():
+class FieldReference():
     def __init__(self, csv_path: str):
         '''
         Reads a file with reference dependence of Stark split positions 
@@ -192,7 +188,7 @@ class StarkReference():
         return self._efield
     
     @property
-    def detunings(self) -> dict:
+    def detunings(self) -> Dict[str, np.ndarray]:
         return self._detunings
     
     def interp(self, 
@@ -234,75 +230,17 @@ class StarkReference():
 
         return detunings_interpolated
 
-@dataclass
-class Spectrum():
-    '''
-    Data holder for a single spectrum
-    '''
-    signal: np.ndarray
-    frequency: np.ndarray
 
-
-@dataclass
-class StarkMap():
-    '''
-    Data holder for a single Stark map
-    '''
-    signal: np.ndarray
-    coordinates: np.ndarray
-    frequency: np.ndarray
-
-    
-
-
-
-class EFieldReconstruct():
-    def __init__(self,
-                 reference: StarkReference,
-                 data: StarkMap):
-        self.signal = data.signal
-        self.frequency = data.frequency
-        self.coordinates = data.coordinates
-        self.reference = reference
-
-
-    def reference_interp(self, efield: float):
+class SignalSimulator():
+    def __init__(self, reference: FieldReference):
         pass
 
-    def eit_signal(self, efield: float):
+    def model(self,):
         pass
 
-    def fit_spectrum1d(self, spectrum_dict: dict):
-        pass
-
-    def fit_spectrum2d(self, spectrum_dict: dict):
-        pass
 
 
 #%%
 if __name__=='__main__':
-
-    amp_rel = [1.35,
-               1.35,
-               np.sqrt(6),
-               np.sqrt(6),
-               np.sqrt(6)]
-    file_path = 'G:/My Drive/Vaults/WnM-AMO/__Scripts/calculated_stark_maps/stark_map_25D_MHz.csv'
-    ref = read_reference(file_path, amp_rel)
-    params = {'amp': 4e2,
-              'width_0': 20.0,
-              'gradE_dr': 10.0}
-
-    freq = np.linspace(100, -1.5e3, 638)
-    signal = eit_signal(freq, 
-                        efield=25.0,
-                        reference_dict=ref,
-                        params_dict=params,
-                        lineshape_func=holtsmarkian)
-
-
-    fig, ax = plt.subplots()
-    ax.plot(freq, signal)
-    ax.set_xlabel('Freq. detuning (MHz)')
-    ax.set_ylabel('EIT signal $S$ (arb. units)')
+    pass
 # %%
