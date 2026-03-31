@@ -10,8 +10,7 @@ import matplotlib.pyplot as plt
 
 
 from pinqued_tools.spectroscopy.spectrum import (
-    Axes0D, Axes1D, Axes2D,
-    SpectralDataSpec, SpectralDataStrip, SpectralDataCube
+    Axes0D, Axes1D, Axes2D
 )
 
 def _mpl_prod_style():
@@ -227,57 +226,11 @@ def lprobe_plot_gp(data_dict: dict,
 
     return fig
 
-def plot_spectrum(spectrum: SpectralDataSpec, **kwargs):
-    '''
-    Plot Spectrum class data
-    '''
-    x = spectrum.axes.f
-    y = spectrum.signal
-
-    freq_units = spectrum.axes.units['f']
-    signal_units = spectrum.units['signal']
-    if spectrum.signal_err is not None:
-        signal_err = spectrum.signal_err
-        plt.errorbar(x, y, yerr=signal_err, 
-                     capsize=1, **kwargs)
-    else:
-        plt.plot(x, y, **kwargs)
-    plt.xlabel(f'Detuning ({freq_units})')
-    plt.ylabel(f'Signal ({signal_units})')
-    return plt.gca()
-
-
-def plot_strip(strip: SpectralDataStrip, **kwargs):
-    '''
-    Plot SpectralStrip class data
-    '''
-    x = strip.axes.x
-    f = strip.axes.f
-    s = strip.signal
-    
-    x_units = strip.axes.units['x']
-    f_units = strip.axes.units['f']
-    s_units = strip.units['signal']
-    
-    plt.pcolormesh(x, f, s, **kwargs)
-    
-    plt.xlabel(f'Position $x$ ({x_units})')
-    plt.ylabel(f'Detuning $f$ ({f_units})')
-    return plt.gca()
 
 
 
 #%%
 if __name__ == '__main__':
-    x = np.linspace(-100,100,270)*1e-2
-    f = np.linspace(400, 800, 200)*1e-2
-    X, F = np.meshgrid(x, f)
-    s = np.sin(X**2+F**2)
-
-    ss = SpectralDataStrip(signal=s, axes=Axes1D(x=X, f=F), units={'signal': '%'})
-    
-    fig, ax = plt.subplots()
-    ax = plot_strip(ss, cmap='jet', )
-    plt.colorbar(label=('EIT Signal $S$ (%)'))
+    pass
 
 # %%
