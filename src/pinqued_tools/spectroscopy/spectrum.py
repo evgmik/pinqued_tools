@@ -109,7 +109,10 @@ class SpectralDataProcessor():
         # Propagate error when the signal samples are binned
         n = array.shape[0]
         arr_reshaped = array.reshape(n // px_per_bin, px_per_bin, *array.shape[1:])
-        return np.sqrt(np.sum(arr_reshaped**2, axis=1))
+        # Claculate error of the binned signal as
+        #  σ = √ {1/N ∑σ^2 } 
+        signal_error = np.sqrt(np.sum(arr_reshaped**2, axis=1) / px_per_bin)
+        return signal_error
 
     def bin(self,
             px_per_bin: int = 2,
@@ -176,7 +179,7 @@ if __name__=='__main__':
     # Process data
     sproc = SpectralDataProcessor(sdata0)
     sproc.remove_fmean()
-    sproc.bin(px_per_bin=2, axis=0)
+    sproc.bin(px_per_bin=16, axis=0)
     sdata_new = sproc.data
 
     # Plot 0D (single spectrum)
