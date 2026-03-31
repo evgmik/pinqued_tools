@@ -2,9 +2,10 @@ import pytest
 import numpy as np
 from src.pinqued_tools.spectroscopy.spectrum import (
     Axes0D, Axes1D, Axes2D,
-    Spectrum, SpectralStrip, SpectralCube
+    SpectralDataSpec, SpectralDataStrip, SpectralDataCube
 )
 
+# Set a seed for reproducibility
 np.random.seed(123)
 
 @pytest.fixture
@@ -35,7 +36,7 @@ def sample_axes2d():
     )
 
 @pytest.fixture
-def sample_spectrum(sample_axes0d):
+def sample_data_spectrum(sample_axes0d):
     """Create a spectrum with a fake Gaussian peak in the center."""
     nf = len(sample_axes0d.f)
     signal = np.zeros(nf)
@@ -44,14 +45,14 @@ def sample_spectrum(sample_axes0d):
     signal = peak + np.random.poisson(lam=np.sqrt(peak))
     signal_err = np.sqrt(signal)
 
-    return Spectrum(signal=signal, 
+    return SpectralDataSpec(signal=signal, 
                     signal_err=signal_err, 
                     axes=sample_axes0d, 
                     units={"signal": "%", "signal_err": "%"},
                     metadata={"experiment": "test_001"})
 
 @pytest.fixture
-def sample_spectral_strip(sample_axes1d):
+def sample_data_strip(sample_axes1d):
     """Create a 2D map with a fake Gaussian peak in the center."""
     nx, nf = len(sample_axes1d.x), len(sample_axes1d.f)
     signal = np.zeros((nx, nf))
@@ -61,14 +62,14 @@ def sample_spectral_strip(sample_axes1d):
     signal[x_idx, :] = peak + np.random.poisson(lam=np.sqrt(peak))
     signal_err = np.sqrt(signal)
 
-    return SpectralStrip(signal=signal, 
+    return SpectralDataStrip(signal=signal, 
                          signal_err=signal_err, 
                          axes=sample_axes1d, 
                          units={"signal": "%", "signal_err": "%"},
                          metadata={"experiment": "test_002"})
 
 @pytest.fixture
-def sample_cube(sample_axes2d):
+def sample_data_cube(sample_axes2d):
     """Create a 3D cube with a fake Gaussian peak in the center."""
     nx, ny, nf = len(sample_axes2d.x), len(sample_axes2d.y), len(sample_axes2d.f)
     signal = np.zeros((nx, ny, nf))
@@ -79,7 +80,7 @@ def sample_cube(sample_axes2d):
     signal[x_idx, y_idx, :] = peak + np.random.poisson(lam=np.sqrt(peak))
     signal_err = np.sqrt(signal)
 
-    return SpectralCube(signal=signal, 
+    return SpectralDataCube(signal=signal, 
                         signal_err=signal_err, 
                         axes=sample_axes2d, 
                         units={"signal": "%", "signal_err": "%"},
