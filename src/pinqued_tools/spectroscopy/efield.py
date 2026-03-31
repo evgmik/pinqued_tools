@@ -6,6 +6,7 @@ Author: Mykhailo Vorobiov
 '''
 #%%
 from typing import Callable, Dict
+from numpy.typing import NDArray
 from dataclasses import dataclass
 
 import numpy as np
@@ -59,11 +60,11 @@ class FieldReference():
             self._detunings_interpolation_domain[key] = detuning_interpolation_domain
             
     @property
-    def efield(self) -> np.ndarray:
+    def efield(self) -> NDArray:
         return self._efield
     
     @property
-    def detunings(self) -> Dict[str, np.ndarray]:
+    def detunings(self) -> Dict[str, NDArray]:
         return self._detunings
     
     @property
@@ -120,9 +121,9 @@ class SignalSimulator():
        
 
     def signal(self, 
-               freq: np.ndarray, 
+               freq: NDArray, 
                params: dict,
-               **kwargs):
+               **kwargs) -> NDArray[np.float64]:
         '''
         Simulate EIT signal for a given electric field
         '''
