@@ -33,7 +33,8 @@ dependencies = [
     "h5py",
     "pandas",
     "scikit-learn",
-    "lmfit"
+    "lmfit",
+    "pytest"
 ]
 
 [project.urls]

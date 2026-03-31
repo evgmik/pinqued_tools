@@ -8,13 +8,15 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, asdict
 from typing import Dict
 from abc import ABC, abstractmethod
+import copy
 
 from pinqued_tools.spectroscopy.efield import FieldReference
 
-#%%
+from pinqued_tools.analysis.plotting import *
+
 # -------------------- Axes classes -------------------------
 @dataclass 
 class BaseAxes(ABC):
@@ -38,142 +40,117 @@ class Axes2D(BaseAxes):
 
 # ----------------- Spectral Data classes -----------------
 @dataclass
-class BaseSpectralData(ABC):
-    """Abstract base class for all spectral data types."""
+class SpectralData():
+    '''
+    Class stores any set of spectral data
+    '''
     signal: np.ndarray
     axes: BaseAxes
     signal_err: np.ndarray|None = None
     units: Dict[str, str] = field(default_factory=lambda: {'signal': '%', 'signal_err': '%'})
     metadata: dict|None = None
-
-@dataclass
-class SpectralDataSpec(BaseSpectralData):
-    '''
-    Class stores a signle spectrum
-    '''
-    def __post_init__(self):
-        if not isinstance(self.axes, Axes0D):
-            raise TypeError(f"axes must be of type Axes0D, not {type(self.axes)}")
-
-@dataclass
-class SpectralDataStrip(BaseSpectralData):
-    '''
-    Class stores a single spectrum strip
-    '''
-    def __post_init__(self):
-        if not isinstance(self.axes, Axes1D):
-            raise TypeError(f"axes must be of type Axes1D, not {type(self.axes)}")
-
-@dataclass
-class SpectralDataCube(BaseSpectralData):
-    '''
-    Class stores a spectral cube
-    '''
-    def __post_init__(self):
-        if not isinstance(self.axes, Axes2D):
-            raise TypeError(f"axes must be of type Axes2D, not {type(self.axes)}")
-
-
+            
 # ------------------ Classes for processing Spectral Data -------------------
-class BaseSpectralDataProcessor(ABC):
-    """Abstract base class for spectral data processors."""
-    def __init__(self, 
-                 data: BaseSpectralData):
-        super().__init__()
-        self._data = data
+
+class SpectralDataProcessor():
+
+    def __init__(self, data: SpectralData):
+        self._data = copy.deepcopy(data)
 
     @property
-    def data(self):
+    def data(self,) -> SpectralData:
         return self._data
 
-    def remove_baseline(self):
-        pass
+    def remove_fmean(self, samples = range(10)):
+        '''
+        Removes mean value of the selected samples calculated along the frequency axis.
+        '''
+        samples = np.take(self._data.signal, samples, axis=0)
+        mean = np.mean(samples, axis=0, keepdims=True)
+        mean_full = np.repeat(mean, self._data.signal.shape[-1], axis=0)
+        self._data.signal -= mean_full
 
-    def denoise_svd(self):
-        pass
-
-
-class SpecProcessor(BaseSpectralDataProcessor):
-    '''
-    Class for processing individual spectra 
-    '''
-    def __init__(self, 
-                 data: SpectralDataSpec):
-        # Store a reference to the original spectrum object to avoid copying
-        self._spectrum = data
-
-
-        self._signal = data.signal
-        self._signal_err = data.signal_err
-        self._axes = data.axes
-        self._units = data.units
-        self._metadata = data.metadata
-
-
-    @property
-    def data(self):
-        # Return a copy if modifications are made, or the original if not.
-        # For now, returning the original reference.
-        return self._spectrum
+    def _bin(self, array, px_per_bin: int):
+        '''
+        Private fucntion to bin a 1d signal array
+        '''
+        n = array.shape[0]
+        arr_reshaped = array.reshape(n // px_per_bin, px_per_bin, *array.shape[1:])
+        return np.mean(arr_reshaped, axis=1)
     
-    def remove_baseline(self):
-        pass
+    def _bin_error(self, array, px_per_bin: int):
+        '''
+        Private fucntion to calcualte errors for binned 1d signal array
+        '''
+        n = array.shape[0]
+        arr_reshaped = array.reshape(n // px_per_bin, px_per_bin, *array.shape[1:])
+        return np.sqrt(np.sum(arr_reshaped**2, axis=1))
 
-    def denoise_svd(self):
-        pass
-
-class StripProcessor(BaseSpectralDataProcessor):
-    pass
-
-class CubeProcessor(BaseSpectralDataProcessor):
-    '''
-    Class for processing a SpectralCube object 
-    '''
-    def __init__(self,
-                 cube: SpectralDataCube):
-        # Store a reference to the original cube object to avoid copying
-        self._cube = cube
-
-    @property
-    def data(self):
-        # Return a copy if modifications are made, or the original if not.
-        # For now, returning the original reference.
-        return self._cube
-
-    def bin_spatial(self,
+    def bin(self,
                     px_per_bin: int = 2,
-                    axis: int = 1):
-        if axis > 1 or axis < 0:
-            raise ValueError("Axis must be 0 (x) or 1 (y) for 2D spatial binning.")
-        
-        # Create new binned data and axes, rather than modifying in place
-        # This example assumes simple slicing for binning, more complex binning
-        # would involve averaging/summing.
-        new_signal = self._cube.signal[::px_per_bin, :, :] if axis == 0 else self._cube.signal[:, ::px_per_bin, :]
-        new_signal_err = self._cube.signal_err[::px_per_bin, :, :] if axis == 0 else self._cube.signal_err[:, ::px_per_bin, :]
-        
-        new_x = self._cube.axes.x[::px_per_bin] if axis == 0 else self._cube.axes.x
-        new_y = self._cube.axes.y[::px_per_bin] if axis == 1 else self._cube.axes.y
+                    axis: int = 0):
+        '''
+        Performs spatial binning of the spectral data.
+        So far limited to axis arrays with dimenstions propto powers of 2
+        Axes idices:
+            0 - f
+            1 - x
+            2 - y
+        '''
+        self._data.signal = np.apply_along_axis(self._bin, axis, 
+                                                self._data.signal, 
+                                                px_per_bin=px_per_bin)
+        if self._data.signal_err is not None:
+            self._data.signal_err = np.apply_along_axis(self._bin_error, axis, 
+                                                    self._data.signal_err, 
+                                                    px_per_bin=px_per_bin)
+            
+        ax_dict = asdict(self._data.axes)
+        for i,k in enumerate(ax_dict.keys()):
+            if i==axis:
+                print(k)
+                ax_dict[k] = self._bin(ax_dict[k], px_per_bin=px_per_bin)
 
-        new_axes = Axes2D(x=new_x, y=new_y, f=self._cube.axes.f, units=self._cube.axes.units)
-        return SpectralDataCube(signal=new_signal, 
-                            signal_err=new_signal_err, 
-                            units=self._cube.units, 
-                            axes=new_axes,
-                            metadata=self._cube.metadata)
+        if isinstance(self._data.axes, Axes0D):
+            self._data.axes = Axes0D(**ax_dict)
+        elif isinstance(self._data.axes, Axes1D):
+            self._data.axes = Axes1D(**ax_dict)
+        elif isinstance(self._data.axes, Axes2D):
+            self._data.axes = Axes2D(**ax_dict) 
 
-    def get_spectrum(self, x=None, y=None):
-        if x is not None and y is not None:
-            # Correctly construct Axes0D for the returned Spectrum
-            axes = Axes0D(f=self._cube.axes.f)
-            return SpectralDataSpec(signal=self._cube.signal[x,y], signal_err=self._cube.signal_err[x,y], axes=axes, units=self._cube.units, metadata=self._cube.metadata)
-        
-    def get_subcube(self):
-        raise NotImplementedError()
+    def remove_baseline(self, **kwargs):
+        pass
 
+    def denoise(self):
+        pass
 
 
 #%%
 if __name__=='__main__':
-    pass
+    from pinqued_tools.analysis.plotting import set_mpl_style
+    set_mpl_style()
+    sdata0 = SpectralData(signal=10 + np.random.poisson(lam=100, size=256)*10.1,
+                          signal_err=np.sqrt(100 + np.random.poisson(lam=100, size=256)*10.1),
+                         axes=Axes0D(f=np.linspace(0,10,256)))
+    sdata = SpectralData(signal=100 + np.random.poisson(lam=100, size=(256,256))*10.1,
+                         axes=Axes1D(x=np.linspace(0,10,256), 
+                                     f=np.linspace(0,100,256)))
+
+    sproc = SpectralDataProcessor(sdata0)
+    sproc.remove_fmean()
+    sproc.bin(px_per_bin=2, axis=0)
+    sdata_new = sproc.data
+
+    fig, ax = plt.subplots()
+    ax.plot(sdata0.axes.f, sdata0.signal)
+    ax.errorbar(x=sdata0.axes.f, y=sdata0.signal, yerr=sdata0.signal_err, linestyle='None')
+    ax.plot(sdata_new.axes.f, sdata_new.signal)
+    ax.errorbar(x=sdata_new.axes.f, y=sdata_new.signal, yerr=sdata_new.signal_err, linestyle='None')
+
+
+    # fig, ax = plt.subplots()
+    # ax.pcolormesh(sdata_new.axes.x, sdata_new.axes.f, sdata_new.signal)
+    # ax.set_xlabel(sdata.axes.units['x'])
+    # ax.set_ylabel(sdata.axes.units['f'])
+
 # %%
