@@ -125,6 +125,11 @@ class SpectralDataProcessor():
             1 - x
             2 - y
         '''
+        if self._data.signal.shape[axis] % px_per_bin != 0:
+            print(f'Cannot perfrom binning along axis {self.AX_ALIAS[axis]} with {px_per_bin} pixels per bin.')
+            print(f'Make sure axis length is dvisible by {px_per_bin}.')
+            raise ValueError
+
         # 1. Bin signal and signal error if present
         self._data.signal = np.apply_along_axis(self._bin, axis, 
                                                 self._data.signal, 
@@ -194,7 +199,7 @@ if __name__=='__main__':
     # Plot 1D (spatial-frequnecy map)
     fig, ax = plt.subplots()
     ax.pcolormesh(sdata.axes.x, sdata.axes.f, sdata.signal, cmap='jet')
-    ax.set_xlabel(f'Position $x$ ({sdata.axes.units['x']})')
-    ax.set_ylabel(f'Detuning $\\Delta_c$ ({sdata.axes.units['f']})')
+    # ax.set_xlabel(f'Position $x$ ({sdata.axes.units['x']})')
+    # ax.set_ylabel(f'Detuning $\\Delta_c$ ({sdata.axes.units['f']})')
 
 # %%
