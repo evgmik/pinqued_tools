@@ -13,6 +13,12 @@ import matplotlib.pyplot as plt
 
 import pandas as pd
 
+from lmfit import minimize, Parameters, fit_report, Model
+from lmfit.minimizer import MinimizerResult
+
+from pinqued_tools.spectroscopy.spectrum import SpectralData, Axes0D
+
+
 class FieldReference():
     '''
     Class reads Rydberg levels positions vs E-field and interpolate 
@@ -116,15 +122,15 @@ class SignalSimulator():
        
     def signal(self, 
                freq: NDArray, 
-               params: dict,
+               params: Parameters,
                **kwargs) -> NDArray[np.float64]:
         '''
         Simulate EIT signal for a given electric field
         '''
-        scale_factor = params['amp']
-        width_0 = params['width_0']
-        gradE_dr = params['gradE_dr']
-        efield = params['efield']
+        scale_factor = params['amp'].value
+        width_0 = params['width_0'].value
+        gradE_dr = params['gradE_dr'].value
+        efield = params['efield'].value
         r_amp = params.get('r_amp', None)
 
         ref = self._reference.interp(efield)
@@ -140,6 +146,48 @@ class SignalSimulator():
                 spectrum += self._lineshape_func(freq, fpos, width, **kwargs)
         spectrum *= scale_factor
         return spectrum
+    
+    def bg_drifts(self, 
+                  freq: NDArray, 
+                  params: dict,
+                  poly_terms: int = 3,
+                  **kwargs):
+        coefs = [params.get(f'b{i}') for i in range(poly_terms) if params.get(f'b{i}') is not None]
+        poly = np.poly1d(coefs)
+        if len(coefs) < poly_terms:
+            return np.zeros_like(freq)
+        return poly(freq)
+        
+class FitModel():
+    '''
+    Class for fitting experimental EIT spectra using the SignalSimulator.
+    '''
+    def __init__(self, 
+                 simulator: SignalSimulator
+                 ):
+        self._simulator = simulator
+
+    def residuals(self, params, freq, data, data_err):
+        signal = self._simulator.signal(freq, params)
+        difference = data - signal
+        if data_err is None:
+            return difference
+        return difference / data_err
+
+class DataFitter():
+    def __init__(self, 
+                 data: SpectralData,
+                 model: FitModel):
+        self._data = data
+        self._model = model
+
+    def fit(self, params: Parameters):
+        result = minimize(self._model.residuals, params, 
+                            args=(self._data.axes.f, 
+                                  self._data.signal, 
+                                  self._data.signal_err))
+        return result
+
 
 #%%
 if __name__=='__main__':
@@ -149,30 +197,63 @@ if __name__=='__main__':
     set_mpl_style()
 
     # Read reference Rydberg splittings
-    ref_path = 'G:\\My Drive\\Vaults\\WnM-AMO\\__Scripts\\calculated_stark_maps\\stark_map_35D_MHz.csv'
+    ref_path = 'G:\\My Drive\\Vaults\\WnM-AMO\\__Scripts\\calculated_stark_maps\\stark_map_25D_MHz.csv'
     ref = FieldReference(ref_path)
 
     # define parameters of the spectrum
-    params = {'efield': 7.0,
+    params = {'efield': 0.6,
               'amp': 150, 
               'width_0': 30, 
-              'gradE_dr': 1,
-              'rel_amp': [0.6, 0.6, 1.0, 1.0, 1.0]}
+              'gradE_dr': 2,
+              'rel_amp': [0.6, 0.6, 1.0, 1.0, 1.0],
+              'b0': 1e-3, 'b1': 1e-2, 'b3': 1e-4}
     
+    params_sim = Parameters()
+    for key, value in params.items():
+        if key == 'rel_amp':
+            continue
+        params_sim.add(key, value=value)
+    
+    params_lmfit = Parameters()
+    params_lmfit.add('efield', value=params['efield'], min=-0.1)
+    params_lmfit.add('amp', value=params['amp']-20.0)
+    params_lmfit.add('width_0', value=params['width_0']+10.0)
+    params_lmfit.add('gradE_dr', value=params['gradE_dr']-1.0)
+
+
     # Instantiate signal simulator object
     sim = SignalSimulator(ref, holtsmarkian)
 
+
     # Generate detunings
-    freq = np.linspace(200, -1000, 700)
+    freq = np.linspace(200, -1500, 700)
 
     # Simulate signal
-    signal = sim.signal(freq, params=params, normalized=True)
+    signal = sim.signal(freq, params=params_sim, normalized=True)
+
+    sigma = 1.0
+    noise = np.random.normal(loc=0, scale=sigma, size=signal.shape)/(signal+1)
+    signal_err =  sigma/(signal+1)
+    signal_noise = signal + noise
+
+    spectrum = SpectralData(signal=signal_noise, 
+                            axes = Axes0D(f=freq),
+                            signal_err=signal_err)
+
+    fm = FitModel(sim)
+    df = DataFitter(spectrum, fm).fit(params_lmfit)
+    print(fit_report(df))
+    print(df.params)
 
     # Plot results
     fig, ax = plt.subplots(figsize=(4,2))
-    ax.set_title(f'Simulated EIT spectrum ($E = ${params["efield"]:.2} V/cm)')
+    ax.set_title(f'Simulated EIT spectrum ($E = ${params["efield"]:.1f} V/cm)')
     ax.plot(freq, signal, linewidth=1.5)
-    ax.fill_betweenx(y=signal, x1=freq, x2=0, color='C0', alpha=0.2)
+    ax.fill_between(y1=signal, x=freq, y2=-2, color='C0', alpha=0.2)
+    ax.scatter(x=freq, y=signal_noise, 
+               marker='.', s=5,
+               color='C3', alpha=0.5)
+    # ax.plot(freq, df.best_fit, linewidth=1.5, color='C1')
     ef =  ref.interp(params['efield'])
     for label, amp, (fpos, _) in zip(ref.level_labels, params['rel_amp'], ef):
         ax.axvline(x=fpos, color='C3', linestyle='--')
