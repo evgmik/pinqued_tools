@@ -88,6 +88,11 @@ class SpectralData():
         return pstring
     
     def add_metadata(self, key: str, value: str):
+        '''
+        Adds metadata entry to class
+        TODO: This method must be reimplemented and refactored
+                currently there is problem that it does not align with the dates
+        '''
         if self.metadata is None:
             self.metadata = {}
         self.metadata[key] = value
