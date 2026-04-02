@@ -1,16 +1,30 @@
 # pinqued_tools
-Repository of the package for PINQUED project. 
-The package contains classes and utility functions to handle data acquisition, data processing and file reading/writing.
+This repository hosts Python toolkit for the PINQUED project. The package provides a comprehensive set of tools to handle data acquisition, processing, and file I/O.
 
 For FLIR camera support, Python 3.10 is required due to compatibility with the Teledyne Spinnaker SDK and its PySpin wrapper. PySpin also requires a NumPy version 1.x, which is reflected in this package's dependencies. For detailed instructions on installing the Spinnaker SDK and PySpin, please refer to the official Teledyne documentation.
 
 # Changelog
-## v 0.0.2
-- Added class to handle SpectralData save and load operations
-- Minor bug fixes
+## v0.0.2 - (2026-04-02)
+#### Added
+- Implemented an HDF5-based I/O handler (`SpectralDataH5Handler`) to save and load spectral data.
+- Introduced a base class for I/O handlers to support more file formats in the future.
+- Added a `preprocess` method to the `SpectralDataProcessor` class.
 
-## v 0.0.1
--  Still cannot save data to a file (wip)
--  Support for FLIR camera data acquisition
--  Classes for spectral data processing 
--  Classes for spectral data storage
+#### Changed
+- Updated and improved example usage scripts.
+
+## v0.0.1 - (2026-04-02)
+#### Added
+- Initial classes for spectral data storage (`SpectralData`) and processing (`SpectralDataProcessor`).
+- Support for data acquisition from FLIR cameras, including timestamped frames.
+- Implemented single spectrum fitting capabilities.
+- Added metadata support to data classes.
+
+#### Changed
+- Consolidated multiple spectral data classes into the single `SpectralData` class for a more unified structure.
+
+#### Fixed
+- Corrected an error propagation bug that occurred during data binning.
+- Addressed a type casting bug in the processing pipeline.
+- Improved performance to resolve slow data acquisition with cameras.
+- Added a division check to prevent errors when binning data.
