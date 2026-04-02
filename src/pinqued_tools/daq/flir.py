@@ -13,17 +13,26 @@ from numpy.typing import NDArray
 
 import PySpin 
 
+from pinqued_tools.spectroscopy.spectrum import SpectralData, Axes2D
+
 class FLIRCamera():
     '''
     Class for FLIR camera data acquisition and control.
     '''
     def __init__(self, 
                  cam_index: int = 0,
+                 fov_horizontal = 8.1, # mm
                  exposure_value: float = 40000.0,
-                 gain_value: float = 20.0
+                 gain_value: float = 20.0,
+                 camera_model = 'Blackfly BFS-PGE-04S2M'
                  ):
         
         self._cam_index = cam_index
+        self._fov_horizontal = fov_horizontal
+        self._cam_model = camera_model
+        self._exposure_value = exposure_value
+        self._gain_value = gain_value
+
 
         # 1. Get singleton reference to system object
         self._system = PySpin.System.GetInstance()
@@ -54,7 +63,7 @@ class FLIRCamera():
 
             # Set manual exposure time (in microseconds)
             exposure_time = PySpin.CFloatPtr(node_map.GetNode('ExposureTime'))
-            exposure_time.SetValue(exposure_value) 
+            exposure_time.SetValue(self._exposure_value) 
 
             # 2. Turn off Auto Gain
             gain_auto = PySpin.CEnumerationPtr(node_map.GetNode('GainAuto'))
@@ -62,7 +71,7 @@ class FLIRCamera():
 
             # Set manual gain (in dB)
             gain = PySpin.CFloatPtr(node_map.GetNode('Gain'))
-            gain.SetValue(gain_value) # Example: 0 dB
+            gain.SetValue(self._gain_value) # Example: 0 dB
 
             # 3. Disable Gamma
             gamma_enable = PySpin.CBooleanPtr(node_map.GetNode('GammaEnable'))
@@ -88,6 +97,26 @@ class FLIRCamera():
         width = self._cam.Width.GetValue()
         height = self._cam.Height.GetValue()
         return width, height
+    
+    @property
+    def fov_horizontal(self) -> float:
+        return self._fov_horizontal
+    
+    @property
+    def exposure_value(self) -> float:
+        return self._exposure_value
+    
+    @property
+    def gain_value(self) -> float:
+        return self._gain_value
+    
+    @property
+    def camera_model(self) -> str:
+        return self._cam_model
+    
+    @property
+    def aspect_ratio(self) -> float:
+        return self.resolution[0] / self.resolution[1]
     
     def set_px_format_mono16bit(self):
         self._cam.AdcBitDepth.SetValue(PySpin.AdcBitDepth_Bit12)
@@ -120,6 +149,16 @@ class FLIRCamera():
             self._cam.TriggerMode.SetValue(PySpin.TriggerMode_Off)
             self._cam.AcquisitionMode.SetValue(PySpin.AcquisitionMode_Continuous)
     
+    def disable_fps_limit(self):
+        if hasattr(self._cam, 'AcquisitionFrameRateEnable'):
+            self._cam.AcquisitionFrameRateEnable.SetValue(False)
+        elif hasattr(self._cam, 'AcquisitionFrameRateEnabled'):
+            self._cam.AcquisitionFrameRateEnabled.SetValue(False)
+
+    def end_acqusition(self):
+        self._cam.EndAcquisition()
+        print('Acquisition ended')
+
     def acquire_sequence(self, num_frames: int):
         self.set_px_format_mono16bit()
 
@@ -141,7 +180,7 @@ class FLIRCamera():
         self._cam.BeginAcquisition()
         print(f'Camera acquisition started. Acquiring {num_frames} frames...')
 
-        time_ms = np.zeros(num_frames)
+        time = np.zeros(num_frames)
         images = np.zeros((num_frames, self.resolution[0], self.resolution[1]), dtype=np.uint16)
         for i in range(num_frames):
             image = self._cam.GetNextImage()
@@ -154,27 +193,33 @@ class FLIRCamera():
             timestamp = chunk_data.GetTimestamp()
 
             # 3. Conver timestamps to milliseconds
-            timestamp_ms = timestamp / 1e6
-            print(f"Time stamp: {timestamp_ms:.4f} ms")
+            print(f"Time stamp: {timestamp:.4f} ms")
 
-            time_ms[i] = timestamp_ms
+            time[i] = timestamp
             image.Release()
 
         self.end_acqusition()
-        time_ms = time_ms - time_ms[0]
+        time -= time[0]
         
-        output = {'time_ms': time_ms, 'images': images}
-        return output
+        # Prepare data for return
+        # Assemble metadata dictionary
+        metadata = {'Date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'Camera': self._cam_model,
+                    'Resolution': f'{self.resolution[0]}x{self.resolution[1]}',
+                    'FOV (mm)': f'{self._fov_horizontal}',
+                    'Exposure time (us)': f'{self._exposure_value}',
+                    'Gain (dB)': f'{self._gain_value}'
+                    }
+        # Create data container to return
+        data = SpectralData(signal=images,
+                            axes=Axes2D(f=time, 
+                                        x=np.linspace(0, self._fov_horizontal, self.resolution[0]),
+                                        y=np.linspace(0, self._fov_horizontal/self.aspect_ratio, self.resolution[1]),
+                                        units={'f':'us', 'x': 'mm', 'y': 'mm'}),
+                            units={'signal': 'counts'},
+                            metadata=metadata)
+        return data
 
-    def disable_fps_limit(self):
-        if hasattr(self._cam, 'AcquisitionFrameRateEnable'):
-            self._cam.AcquisitionFrameRateEnable.SetValue(False)
-        elif hasattr(self._cam, 'AcquisitionFrameRateEnabled'):
-            self._cam.AcquisitionFrameRateEnabled.SetValue(False)
-
-    def end_acqusition(self):
-        self._cam.EndAcquisition()
-        print('Acquisition ended')
 
 
 #%%
@@ -191,32 +236,30 @@ if __name__=='__main__':
 #%%
     cam = FLIRCamera(cam_index=0,
                      exposure_value=exposure_ms)
-    cam.trigger('on')
+    cam.trigger('off')
     cam.disable_fps_limit()
-    result = cam.acquire_sequence(num_frames)
+    cam_data = cam.acquire_sequence(num_frames)
     cam.deinit()
     
 #%%
-    id = np.ones_like(result['images'][0])
-    rel_signal = id - result['images'] / result['images'][0]
+    print(cam_data)
 #%%
     plt.figure(1)
-    plt.pcolormesh(rel_signal[:,:,100], cmap='jet')
+    plt.pcolormesh(cam_data.axes.x, cam_data.axes.f, cam_data.signal[:,:,100], cmap='jet')
 
     plt.figure(2)
-    plt.pcolormesh(result['images'][1], cmap='jet')
-# %%
-    from pinqued_tools.spectroscopy.spectrum import SpectralData, Axes2D, SpectralDataProcessor
+    plt.pcolormesh(cam_data.axes.x, cam_data.axes.y, cam_data.signal[1].T, cmap='jet')
+# # %%
+    from pinqued_tools.spectroscopy.spectrum import SpectralDataProcessor
 
-    sdata = SpectralData(signal=rel_signal,
-                         axes=Axes2D(f=result['time_ms'],
-                                     x=np.linspace(0, rel_signal.shape[1], rel_signal.shape[1]),
-                                     y=np.linspace(0, rel_signal.shape[2], rel_signal.shape[2])))
-# %%
-    sproc = SpectralDataProcessor(sdata)
+    sproc = SpectralDataProcessor(cam_data)
+
     sproc.remove_fmean()
-    sproc.bin(px_per_bin=3, axis=2)
-    sdata_new = sproc.data
+    sproc.bin(px_per_bin=18, axis=1)
+    sproc.data
     plt.figure(3)
-    plt.pcolormesh(sdata_new.axes.x, sdata_new.axes.f, sdata_new.signal[:,:,50], cmap='jet')
+    plt.pcolormesh(sproc.data.axes.x, sproc.data.axes.f, sproc.data.signal[:,:,50], cmap='jet')
+# %%
+    print(sproc.data)
+
 # %%
