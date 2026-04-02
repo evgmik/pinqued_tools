@@ -4,8 +4,10 @@ The package contains classes and utility functions to handle data acquisition, d
 
 For FLIR camera support, Python 3.10 is required due to compatibility with the Teledyne Spinnaker SDK and its PySpin wrapper. PySpin also requires a NumPy version 1.x, which is reflected in this package's dependencies. For detailed instructions on installing the Spinnaker SDK and PySpin, please refer to the official Teledyne documentation.
 
-
 # Changelog
+## v 0.0.2
+- Added class to handle SpectralData save and load operations
+- Minor bug fixes
 
 ## v 0.0.1
 -  Still cannot save data to a file (wip)
