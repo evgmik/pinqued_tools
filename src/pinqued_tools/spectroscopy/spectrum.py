@@ -46,13 +46,43 @@ class SpectralData():
     signal_err: NDArray|None = None
     units: Dict[str, str] = field(default_factory=lambda: {'signal': '%', 'signal_err': '%'})
     metadata: dict|None = None
+
     def __post_init__(self):
         self.metadata = self.metadata or {'signal dims': f'{self.signal.shape}'}
 
     def __repr__(self) -> str:
-        pstring = ''
-        for field in fields(self):
-            pstring += f'{field.name}: {getattr(self, field.name)}\n'
+        pstring = f"<{self.__class__.__name__} at {hex(id(self))}>\n"
+        total_mem = 0
+
+        pstring += "--- Data Arrays ---\n"
+        
+        mem_signal = self.signal.nbytes
+        total_mem += mem_signal
+        pstring += f"signal: shape={self.signal.shape}, unit={self.units.get('signal', 'N/A')}, mem={mem_signal / 1024**2:.3f} MB\n"
+
+        if self.signal_err is not None:
+            mem_err = self.signal_err.nbytes
+            total_mem += mem_err
+            pstring += f"signal_err: shape={self.signal_err.shape}, unit={self.units.get('signal_err', 'N/A')}, mem={mem_err / 1024**2:.3f} MB\n"
+
+        pstring += "\n--- Axes ---\n"
+        axes_fields = fields(self.axes)
+        for f in axes_fields:
+            if f.name == 'units':
+                continue
+            ax_val = getattr(self.axes, f.name)
+            if isinstance(ax_val, np.ndarray):
+                mem_ax = ax_val.nbytes
+                total_mem += mem_ax
+                pstring += f"{f.name}: shape={ax_val.shape}, unit={self.axes.units.get(f.name, 'N/A')}, mem={mem_ax / 1024**2:.3f} MB\n"
+
+        if self.metadata:
+            pstring += "\n--- Metadata ---\n"
+            for k, v in self.metadata.items():
+                pstring += f"{k}: {v}\n"
+
+        pstring += "-------------------\n"
+        pstring += f"Total memory: {total_mem / 1024**2:.3f} MB\n"
         return pstring
 
             
@@ -71,6 +101,7 @@ class SpectralDataProcessor():
 
     def __init__(self, data: SpectralData):
         self._data = copy.deepcopy(data)
+        self._data.signal = self._data.signal.astype(np.float64)
 
     @property
     def data(self,) -> SpectralData:
@@ -186,6 +217,9 @@ if __name__=='__main__':
     sproc.remove_fmean()
     sproc.bin(px_per_bin=16, axis=0)
     sdata_new = sproc.data
+
+    print(sdata0)
+    print(sdata_new)
 
     # Plot 0D (single spectrum)
     fig, ax = plt.subplots()
