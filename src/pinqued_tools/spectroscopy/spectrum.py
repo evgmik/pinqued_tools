@@ -112,7 +112,7 @@ class SpectralDataProcessor():
 
     def __init__(self, data: SpectralData):
         self._data = copy.deepcopy(data)
-        self._data.signal = self._data.signal.astype(np.float64)
+        self._data.signal = self._data.signal.astype(np.float16)
         self._data.metadata = {'Date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' Processing...'}
 
     @property
