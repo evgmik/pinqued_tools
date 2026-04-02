@@ -29,15 +29,30 @@ class SpectralDataH5Handler(BaseIOHandler):
     '''
     Class for saving and loading SpectralData objects to/from HDF5 files.
     '''
-    def save(self, data: SpectralData, file_path: str, group_name: str = 'spectral_data'):
-        """Saves a SpectralData object to an HDF5 file."""
+    def save(self, 
+             data: SpectralData, 
+             file_path: str, 
+             group_name: str = 'spectral_data',
+             compression='gzip',
+             compression_opts=9):
+        """
+        Saves a SpectralData object to an HDF5 file.
+            TODO: If Spectral data is if type float64, find a way to store as int16 type (save space)
+        """
+
         with h5py.File(file_path, 'a') as f:
             group = f.create_group(group_name)
 
             # Save arrays and attributes
-            group.create_dataset('signal', data=data.signal)
+            group.create_dataset('signal', 
+                                 data=data.signal,
+                                 compression=compression,
+                                 compression_opts=compression_opts)
             if data.signal_err is not None:
-                group.create_dataset('signal_err', data=data.signal_err)
+                group.create_dataset('signal_err', 
+                                     data=data.signal_err,
+                                     compression=compression,
+                                     compression_opts=compression_opts)
             
             group.attrs['units'] = json.dumps(data.units)
             if data.metadata:
