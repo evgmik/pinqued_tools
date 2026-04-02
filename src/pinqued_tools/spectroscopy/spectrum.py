@@ -8,6 +8,8 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
+from datetime import datetime
+
 from dataclasses import dataclass, field, fields, asdict
 from typing import Dict
 from numpy.typing import NDArray
@@ -84,10 +86,14 @@ class SpectralData():
         pstring += "-------------------\n"
         pstring += f"Total memory: {total_mem / 1024**2:.3f} MB\n"
         return pstring
+    
+    def add_metadata(self, key: str, value: str):
+        if self.metadata is None:
+            self.metadata = {}
+        self.metadata[key] = value
 
-            
+
 # ------------------ Classes for processing Spectral Data -------------------
-
 class SpectralDataProcessor():
     '''
     Class for processing spectral data.
@@ -102,10 +108,33 @@ class SpectralDataProcessor():
     def __init__(self, data: SpectralData):
         self._data = copy.deepcopy(data)
         self._data.signal = self._data.signal.astype(np.float64)
+        self._data.metadata = {'Date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' Processing...'}
 
     @property
     def data(self,) -> SpectralData:
-        return self._data
+        return self._data        
+    
+    def preprocess(self):
+        '''
+        Turns raw spectral image from the camera into the relative intensity dip signal.
+        Addiitonaly the function calculates signal error.
+        '''
+        # Extract very first image away from the intensity dips
+        bg_image = self._data.signal[0]
+        singnal_err = np.sqrt(self._data.signal)
+
+        # Calculate relative intensity dip signal
+        relative_signal = self._data.signal / bg_image
+
+        # Calculate signal error
+        # σ_s = I/I0 * √((σ_I/I)^2 + (σ_I0/I0)^2)
+        err_signal_ratio2 = (singnal_err / bg_image)**2
+        err_bg_ratio2 = (singnal_err / bg_image)**2
+        relative_signal_err = relative_signal * np.sqrt(err_signal_ratio2 + err_bg_ratio2)
+        
+        # Update data
+        self._data.signal = relative_signal
+        self._data.signal_err = relative_signal_err
 
     def remove_fmean(self, samples = range(10)) -> None:
         '''
@@ -196,6 +225,25 @@ class SpectralDataProcessor():
         pass
 
 
+class Calibration():
+    '''
+    Class for processing of calibration trace data.
+    In the case of Ryderbg nD states it fits two peaks with
+    known separations and determines time-to-frequency 
+    conversion factor
+    '''
+    def __init__(self):
+        pass
+
+    def fit(self):
+        pass
+
+    def get_conversion_factor(self):
+        pass
+
+    def time_to_freq(self):
+        pass
+
 #%%
 if __name__=='__main__':
     # ------------------  Usage example ----------------
@@ -206,41 +254,39 @@ if __name__=='__main__':
     from pinqued_tools.data.io import SpectralDataH5Handler
     h5_handler = SpectralDataH5Handler()
 
-    # Create mock data
+    # 1. Create mock data
+    # single spectrum (f, signal)
     sdata0 = SpectralData(signal=10 + np.random.poisson(lam=100, size=256)*10.1,
                           signal_err=np.sqrt(100 + np.random.poisson(lam=100, size=256)*10.1),
                          axes=Axes0D(f=np.linspace(0,10,256)),
                          metadata={'Date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
+    # 1d spectral map (f, x, signal)
     sdata = SpectralData(signal=100 + np.random.poisson(lam=100, size=(256,256))*10.1,
                          axes=Axes1D(x=np.linspace(0,10,256), 
                                      f=np.linspace(0,100,256)))
 
-    # Process data
-    sproc = SpectralDataProcessor(sdata0)
+    # 2. Process data using processor class
+    sproc = SpectralDataProcessor(sdata)
+    sproc.preprocess() # convert to relative dip intensity and calculate resulting error
     sproc.remove_fmean()
-    sproc.bin(px_per_bin=16, axis=0)
-    sdata_new = sproc.data
+    sproc.bin(px_per_bin=16, axis=1)
 
+    # 3. Print info about data containers
     print(sdata0)
-    print(sdata_new)
-
-    h5_handler.save(sdata0, '.hello_h5file.h5')
-    sdata0 = h5_handler.load('.hello_h5file.h5')
-    print(sdata0)
+    print(sproc.data)
 
     # Plot 0D (single spectrum)
     fig, ax = plt.subplots()
     ax.errorbar(x=sdata0.axes.f, y=sdata0.signal, yerr=sdata0.signal_err, 
                 linestyle='None', marker='o', markersize=2, alpha=0.6)
-    ax.errorbar(x=sdata_new.axes.f, y=sdata_new.signal, yerr=sdata_new.signal_err, 
-                linestyle='None', marker='v', markersize=2, alpha=0.6)
-    # ax.set_xlabel(f'Detuning $\\Delta_c$ ({sdata.axes.units['f']})')
-    # ax.set_ylabel(f'EIT Signal $S$ ({sdata.units['signal']})')
-
-    # Plot 1D (spatial-frequnecy map)
+    
+    # Plot 1D (spatial-frequnecy map) raw data
     fig, ax = plt.subplots()
     ax.pcolormesh(sdata.axes.x, sdata.axes.f, sdata.signal, cmap='jet')
-    # ax.set_xlabel(f'Position $x$ ({sdata.axes.units['x']})')
-    # ax.set_ylabel(f'Detuning $\\Delta_c$ ({sdata.axes.units['f']})')
+
+    # Plot 1D (spectrum with error) preprocessed, i.e. converted to relative dip intensity
+    fig, ax = plt.subplots()
+    ax.errorbar(x=sproc.data.axes.f, y=sproc.data.signal[:,10], yerr=sproc.data.signal_err[:,10],
+                linestyle='None', marker='o', markersize=2, alpha=0.6)
 
 # %%
