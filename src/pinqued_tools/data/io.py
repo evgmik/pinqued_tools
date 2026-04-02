@@ -6,22 +6,99 @@ The class handles reading data from disk.
 
 from abc import ABC, abstractmethod
 
+import os
+from datetime import datetime
 import h5py
 import json
 from dataclasses import fields
 from pinqued_tools.spectroscopy.spectrum import SpectralData, Axes0D, Axes1D, Axes2D
 
 
-class BaseIOHandler(ABC):
-    pass
+class DataManager:
+    """
+    Manages reading and writing data by delegating to format-specific handlers.
+    Automates the creation of unique, dated, and versioned filenames.
+    """
+    def __init__(self, base_path: str = './'):
+        self._base_path = os.path.abspath(base_path)
+        if not os.path.exists(self._base_path):
+            os.makedirs(self._base_path)
+        self._handlers = {}
+        # Register default handlers upon initialization
+        self.register_handler('.h5', SpectralDataH5Handler())
+        # Example for the future:
+        # self.register_handler('.json', SpectralDataJsonHandler())
 
+    def register_handler(self, extension: str, handler: 'BaseIOHandler'):
+        """
+        Registers an I/O handler for a given file extension.
+        This makes the DataManager extensible to new file types.
+        """
+        self._handlers[extension.lower()] = handler
+
+    def _get_handler(self, filepath: str) -> 'BaseIOHandler':
+        """Finds the appropriate handler based on the file extension."""
+        extension = os.path.splitext(filepath)[1].lower()
+        if not extension:
+            raise ValueError("File path must have an extension to determine the handler.")
+        
+        handler = self._handlers.get(extension)
+        if not handler:
+            raise ValueError(f"No handler registered for file extension '{extension}'.")
+        return handler
+
+    def _generate_unique_filepath(self, base_name: str, ext: str) -> str:
+        """
+        Generates a unique filepath in the format:
+        <base_path>/<YYYY-MM-DD>_<base_name>_<count>.<ext>
+        """
+        date_str = datetime.now().strftime('%Y-%m-%d')
+        filename_prefix = f"{base_name}_{date_str}"
+        
+        count = 0
+        while True:
+            candidate_filename = f"{filename_prefix}_{count}{ext}"
+            filepath = os.path.join(self._base_path, candidate_filename)
+            if not os.path.exists(filepath):
+                return filepath
+            count += 1
+
+    def save(self, data, base_name: str, ext: str = '.h5', **kwargs):
+        """
+        Generates a unique, dated, and versioned filename, and saves data
+        using the appropriate handler based on the extension.
+        """
+        # Generate the full, unique path for the new file
+        filepath = self._generate_unique_filepath(base_name, ext)
+        
+        # Get the handler and save the data
+        handler = self._get_handler(filepath)
+        print(f"Saving data to {filepath} using {handler.__class__.__name__}")
+        handler.save(data, filepath, **kwargs)
+
+    def load(self, filepath: str, **kwargs):
+        """
+        Loads data from a file by finding the correct handler and delegating
+        the load operation to it. Expects a full or relative path to the file.
+        """
+        handler = self._get_handler(filepath)
+        # Assumes filepath is relative to the current working dir or an absolute path
+        print(f"Loading data from {filepath} using {handler.__class__.__name__}")
+        return handler.load(filepath, **kwargs)
+
+
+class BaseIOHandler(ABC):
+    """
+    Abstract base class for all I/O handlers. Defines the interface
+    that DataManager uses to interact with different file formats.
+    """
     @abstractmethod
-    def save(self, data, file_path: str):
+    def save(self, data, file_path: str, **kwargs):
         """Abstract method to save data to a file."""
         pass
 
     @abstractmethod
-    def load(self, file_path: str):
+    def load(self, file_path: str, **kwargs):
         """Abstract method to load data from a file."""
         pass
 
