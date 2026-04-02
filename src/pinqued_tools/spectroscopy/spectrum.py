@@ -112,7 +112,7 @@ class SpectralDataProcessor():
 
     def __init__(self, data: SpectralData):
         self._data = copy.deepcopy(data)
-        self._data.signal = self._data.signal.astype(np.float16)
+        self._data.signal = self._data.signal.astype(np.float32)
         self._data.metadata = {'Date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')+' Processing...'}
 
     @property
@@ -256,6 +256,12 @@ if __name__=='__main__':
     from pinqued_tools.analysis.plotting import set_mpl_style
     set_mpl_style()
 
+    from pinqued_tools.data.io import SpectralDataH5Handler, DataManager
+    h5_handler = SpectralDataH5Handler()
+
+    dm = DataManager(base_path='./data')
+
+
     # 1. Create mock data
     # single spectrum (f, signal)
     sdata0 = SpectralData(signal=10 + np.random.poisson(lam=100, size=256)*10.1,
@@ -272,6 +278,9 @@ if __name__=='__main__':
     sproc.preprocess() # convert to relative dip intensity and calculate resulting error
     sproc.remove_fmean()
     sproc.bin(px_per_bin=16, axis=1)
+
+    dm.save(sproc.data, 'spec_data_processed', ext='.h5')
+
 
     # 3. Print info about data containers
     print(sdata0)
