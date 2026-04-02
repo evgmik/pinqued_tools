@@ -4,13 +4,31 @@ Docstring for pinqued_tools.data.io
 The class handles reading data from disk.
 '''
 
+from abc import ABC, abstractmethod
+
 import h5py
 import json
 from dataclasses import fields
 from pinqued_tools.spectroscopy.spectrum import SpectralData, Axes0D, Axes1D, Axes2D
 
-class SpectralDataH5Handler:
-    @staticmethod
+
+class BaseIOHandler(ABC):
+    pass
+
+    @abstractmethod
+    def save(self, data, file_path: str):
+        """Abstract method to save data to a file."""
+        pass
+
+    @abstractmethod
+    def load(self, file_path: str):
+        """Abstract method to load data from a file."""
+        pass
+
+class SpectralDataH5Handler(BaseIOHandler):
+    '''
+    Class for saving and loading SpectralData objects to/from HDF5 files.
+    '''
     def save(self, data: SpectralData, file_path: str, group_name: str = 'spectral_data'):
         """Saves a SpectralData object to an HDF5 file."""
         with h5py.File(file_path, 'a') as f:
@@ -32,7 +50,7 @@ class SpectralDataH5Handler:
             for field in fields(data.axes):
                 if field.name != 'units':
                     axes_group.create_dataset(field.name, data=getattr(data.axes, field.name))
-    @staticmethod
+
     def load(self, file_path: str, group_name: str = 'spectral_data') -> SpectralData:
         """Loads a SpectralData object from an HDF5 file."""
         with h5py.File(file_path, 'r') as f:
@@ -55,4 +73,9 @@ class SpectralDataH5Handler:
             axes_class_map = {'Axes0D': Axes0D, 'Axes1D': Axes1D, 'Axes2D': Axes2D}
             axes = axes_class_map[axes_type_str](**axes_data)
 
-            return SpectralData(signal=signal, signal_err=signal_err, axes=axes, units=units, metadata=metadata)
+            data = SpectralData(signal=signal, 
+                                signal_err=signal_err, 
+                                axes=axes, 
+                                units=units, 
+                                metadata=metadata)
+            return data
