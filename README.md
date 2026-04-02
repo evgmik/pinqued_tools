@@ -8,6 +8,7 @@ For FLIR camera support, Python 3.10 is required due to compatibility with the T
 # Changelog
 
 ## v 0.0.1
+-  Still cannot save data to a file (wip)
 -  Support for FLIR camera data acquisition
 -  Classes for spectral data processing 
 -  Classes for spectral data storage
