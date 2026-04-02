@@ -1,7 +1,18 @@
 # pinqued_tools
 This repository hosts Python toolkit for the PINQUED project. The package provides a comprehensive set of tools to handle data acquisition, processing, and file I/O.
 
-For FLIR camera support, Python 3.10 is required due to compatibility with the Teledyne Spinnaker SDK and its PySpin wrapper. PySpin also requires a NumPy version 1.x, which is reflected in this package's dependencies. For detailed instructions on installing the Spinnaker SDK and PySpin, please refer to the official Teledyne documentation.
+
+
+## Installation
+
+> For FLIR camera support, Python 3.10 is required due to compatibility with the Teledyne Spinnaker SDK and its PySpin wrapper. PySpin also requires a NumPy version 1.x, which is reflected in this package's dependencies. For detailed instructions on installing the Spinnaker SDK and PySpin, please refer to the official Teledyne documentation.
+
+To install PINQUED_tools package, type
+```bash
+pip install git+https://github.com/mikevorobiov/pinqued_tools/
+```
+
+
 
 # Changelog
 ## v0.0.2 - (2026-04-02)
