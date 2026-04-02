@@ -16,9 +16,9 @@ pip install git+https://github.com/mikevorobiov/pinqued_tools/
 
 # Changelog
 ## v0.0.3 - (2026-04-02)
-### Added 
+#### Added 
 - `DataManager` class that handles saving data and incrementing file name if file path exists.
-### Fixed
+#### Fixed
 - Conversion of `signal` field to float16 in `SpectralDataProcessor` replaced with float32 as hdf5 doesn't support float16.
 
 ## v0.0.2 - (2026-04-02)
