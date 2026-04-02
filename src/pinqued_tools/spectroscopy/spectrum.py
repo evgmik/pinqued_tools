@@ -85,7 +85,7 @@ class SpectralDataProcessor():
         
         # 2. Calculate average and subtract from the signal array
         mean = np.mean(samples, axis=0, keepdims=True)
-        mean_full = np.repeat(mean, self._data.signal.shape[-1], axis=0)
+        mean_full = np.repeat(mean, self._data.signal.shape[0], axis=0)
         self._data.signal -= mean_full
 
         # 3. Add message to metadata that removal of mean has been performed
@@ -193,8 +193,8 @@ if __name__=='__main__':
                 linestyle='None', marker='o', markersize=2, alpha=0.6)
     ax.errorbar(x=sdata_new.axes.f, y=sdata_new.signal, yerr=sdata_new.signal_err, 
                 linestyle='None', marker='v', markersize=2, alpha=0.6)
-    ax.set_xlabel(f'Detuning $\\Delta_c$ ({sdata.axes.units['f']})')
-    ax.set_ylabel(f'EIT Signal $S$ ({sdata.units['signal']})')
+    # ax.set_xlabel(f'Detuning $\\Delta_c$ ({sdata.axes.units['f']})')
+    # ax.set_ylabel(f'EIT Signal $S$ ({sdata.units['signal']})')
 
     # Plot 1D (spatial-frequnecy map)
     fig, ax = plt.subplots()
