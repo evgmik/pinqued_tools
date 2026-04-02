@@ -203,6 +203,9 @@ if __name__=='__main__':
     from pinqued_tools.analysis.plotting import set_mpl_style
     set_mpl_style()
 
+    from pinqued_tools.data.io import SpectralDataH5Handler
+    h5_handler = SpectralDataH5Handler()
+
     # Create mock data
     sdata0 = SpectralData(signal=10 + np.random.poisson(lam=100, size=256)*10.1,
                           signal_err=np.sqrt(100 + np.random.poisson(lam=100, size=256)*10.1),
@@ -220,6 +223,10 @@ if __name__=='__main__':
 
     print(sdata0)
     print(sdata_new)
+
+    h5_handler.save(sdata0, '.hello_h5file.h5')
+    sdata0 = h5_handler.load('.hello_h5file.h5')
+    print(sdata0)
 
     # Plot 0D (single spectrum)
     fig, ax = plt.subplots()
