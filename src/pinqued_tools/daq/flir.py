@@ -227,39 +227,42 @@ class FLIRCamera():
 if __name__=='__main__':
     # Apply custom plotting style
     from matplotlib import pyplot as plt
+    from pinqued_tools.spectroscopy.spectrum import SpectralDataProcessor
+    from pinqued_tools.analysis.plotting import set_mpl_style
+    set_mpl_style()
 
     sweep_hz = 0.02
     exposure_ms = 40 *1000 # us 
     num_frames = np.floor(0.5 / (sweep_hz * exposure_ms*1e-6)).astype(int)
     print(f'Number of frames: {num_frames}')
 
-#%%
     cam = FLIRCamera(cam_index=0,
                      exposure_value=exposure_ms)
     cam.trigger('off')
     cam.disable_fps_limit()
     cam_data = cam.acquire_sequence(num_frames)
     cam.deinit()
-    
-#%%
+
     print(cam_data)
-#%%
+
     plt.figure(1)
     plt.pcolormesh(cam_data.axes.x, cam_data.axes.f, cam_data.signal[:,:,100], cmap='jet')
 
     plt.figure(2)
     plt.pcolormesh(cam_data.axes.x, cam_data.axes.y, cam_data.signal[1].T, cmap='jet')
-# # %%
-    from pinqued_tools.spectroscopy.spectrum import SpectralDataProcessor
 
     sproc = SpectralDataProcessor(cam_data)
-
+    sproc.preprocess() # convert to relative dip intensity and calculate resulting error
     sproc.remove_fmean()
     sproc.bin(px_per_bin=18, axis=1)
     sproc.data
     plt.figure(3)
     plt.pcolormesh(sproc.data.axes.x, sproc.data.axes.f, sproc.data.signal[:,:,50], cmap='jet')
-# %%
-    print(sproc.data)
 
+    print(sproc.data)
+    
+    from pinqued_tools.data.io import SpectralDataH5Handler
+    h5_handler = SpectralDataH5Handler()
+    h5_handler.save(data=sproc.data, 
+                    file_path='processed_file.h5')
 # %%
