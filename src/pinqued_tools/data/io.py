@@ -76,6 +76,18 @@ class DataManager:
         print(f"Saving data to {filepath} using {handler.__class__.__name__}")
         handler.save(data, filepath, **kwargs)
 
+    def save_object(self, obj, base_name: str, ext: str, **kwargs):
+        """
+        Generates a unique, dated, and versioned filename, and saves data
+        using the object's own .save(file_path) method.
+        """
+        if not hasattr(obj, 'save') or not callable(getattr(obj, 'save')):
+            raise TypeError("Object must have a callable 'save' method.")
+        
+        filepath = self._generate_unique_filepath(base_name, ext)
+        print(f"Saving object to {filepath}")
+        obj.save(filepath, **kwargs)
+
     def load(self, filepath: str, **kwargs):
         """
         Loads data from a file by finding the correct handler and delegating
