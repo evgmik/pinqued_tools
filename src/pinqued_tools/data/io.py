@@ -88,7 +88,7 @@ class DataManager:
         print(f"Saving object to {filepath}")
         obj.save(filepath, **kwargs)
 
-    def save_figure(self, fig, base_name: str, ext: str = '.png', dpi: int=300,**kwargs):
+    def save_figure(self, fig, base_name: str, ext: str = '.png', **kwargs):
         """
         Generates a unique, dated, and versioned filename, and saves a figure
         using the appropriate handler based on the extension.
