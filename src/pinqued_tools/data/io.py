@@ -88,6 +88,15 @@ class DataManager:
         print(f"Saving object to {filepath}")
         obj.save(filepath, **kwargs)
 
+    def save_figure(self, fig, base_name: str, ext: str = '.png', dpi: int=300,**kwargs):
+        """
+        Generates a unique, dated, and versioned filename, and saves a figure
+        using the appropriate handler based on the extension.
+        """
+        filepath = self._generate_unique_filepath(base_name, ext)
+        print(f"Saving object to {filepath}")
+        fig.savefig(filepath, **kwargs)
+
     def load(self, filepath: str, **kwargs):
         """
         Loads data from a file by finding the correct handler and delegating
