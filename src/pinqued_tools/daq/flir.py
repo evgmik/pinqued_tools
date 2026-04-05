@@ -116,6 +116,10 @@ class FLIRCamera():
     
     @property
     def aspect_ratio(self) -> float:
+        '''
+        Returns current aspect ratio of the camera.
+        This will reflect any changes in ROI size set up in SpinView.
+        '''
         return self.resolution[0] / self.resolution[1]
     
     def set_px_format_mono16bit(self):
@@ -181,10 +185,11 @@ class FLIRCamera():
         print(f'Camera acquisition started. Acquiring {num_frames} frames...')
 
         time = np.zeros(num_frames)
-        images = np.zeros((num_frames, self.resolution[0], self.resolution[1]), dtype=np.uint16)
+        images = np.empty((num_frames, self.resolution[1], self.resolution[0]), dtype=np.uint16)
         for i in range(num_frames):
             image = self._cam.GetNextImage()
-            images[i] = np.reshape(image.GetData(), self.resolution)
+            images[i] = image.GetNDArray()
+
 
             # Get the chunk data container
             chunk_data = image.GetChunkData()
@@ -199,6 +204,10 @@ class FLIRCamera():
             image.Release()
 
         self.end_acqusition()
+
+        # Swap axes 1 and 2 to comply with (f, x, y) convention of the rest of the code.
+        # Contiguous array is requored to prevent slow processing down the pipeline.
+        images = np.ascontiguousarray(np.swapaxes(images, 1, 2))
         time -= time[0]
         
         # Prepare data for return
