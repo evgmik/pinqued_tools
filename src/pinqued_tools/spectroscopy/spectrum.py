@@ -138,7 +138,7 @@ class SpectralDataProcessor():
         relative_signal_err = relative_signal * np.sqrt(err_signal_ratio2 + err_bg_ratio2)
         
         # Update data
-        self._data.signal = relative_signal
+        self._data.signal = 1.0 - relative_signal
         self._data.signal_err = relative_signal_err
 
     def remove_fmean(self, samples = range(10)) -> None:
