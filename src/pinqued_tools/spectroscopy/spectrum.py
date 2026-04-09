@@ -119,22 +119,26 @@ class SpectralDataProcessor():
     def data(self,) -> SpectralData:
         return self._data        
     
-    def preprocess(self):
+    def preprocess(self, background_image: SpectralData|None = None):
         '''
         Turns raw spectral image from the camera into the relative intensity dip signal.
         Addiitonaly the function calculates signal error.
         '''
         # Extract very first image away from the intensity dips
-        bg_image = self._data.signal[0]
-        singnal_err = np.sqrt(self._data.signal)
-
+        if background_image is not None:
+            self._data.signal -= background_image.signal
+            singnal_err_squared = self._data.signal + background_image.signal
+            err_signal_ratio2 = singnal_err_squared / self._data.signal**2
+        else:
+            err_signal_ratio2 = 1.0 / self._data.signal
+        
         # Calculate relative intensity dip signal
+        bg_image = self._data.signal[0]
         relative_signal = self._data.signal / bg_image
 
         # Calculate signal error
         # σ_s = I/I0 * √((σ_I/I)^2 + (σ_I0/I0)^2)
-        err_signal_ratio2 = (singnal_err / bg_image)**2
-        err_bg_ratio2 = (singnal_err / bg_image)**2
+        err_bg_ratio2 = 1.0 / bg_image
         relative_signal_err = relative_signal * np.sqrt(err_signal_ratio2 + err_bg_ratio2)
         
         # Update data
