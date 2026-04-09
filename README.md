@@ -15,6 +15,17 @@ pip install git+https://github.com/mikevorobiov/pinqued_tools/
 
 
 # Changelog
+## v0.0.4 - (2026-04-09)
+#### Added
+- `DataManager` now supports saving `matplotlib` figures and any object with a `.save()` method.
+#### Fixed
+- `FLIRCamera` now correctly reshapes the bitstream from the camera into an image.
+- `SpectralDataProcessor`:
+    - Fixed incorrect calculation of relative intensity change.
+    - Added background image subtraction to the `preprocess()` method.
+    - Implemented correct error propagation in the `preprocess()` method.
+
+
 ## v0.0.3 - (2026-04-02)
 #### Added 
 - `DataManager` class that handles saving data and incrementing file name if file path exists.
