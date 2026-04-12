@@ -14,13 +14,12 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from scipy.interpolate import CubicSpline
-from lmfit import minimize, Parameters, fit_report, Model
-from lmfit.minimizer import MinimizerResult
+from lmfit import minimize, Parameters, fit_report
 
 from arc import Rubidium85
 
 from pinqued_tools.spectroscopy.spectrum import SpectralData, Axes0D
-
+from pinqued_tools.spectroscopy.lineshapes import HoltsmarkLine
 
 class FieldReference():
     '''
@@ -87,7 +86,6 @@ class FieldReference():
             return self.interp_spline(efield)
         else:
             raise ValueError("Invalid interpolation method. Choose 'poly' or 'spline'.")
-
 
     def interp_poly(self, efield: float) -> list[tuple[float, float]]:
         '''
@@ -259,11 +257,64 @@ class SignalSimulator():
     '''
     def __init__(self, 
                  reference: FieldReference,
-                 lineshape_func: Callable
+                 lineshape_func: Callable|None = None
                  ):
         self._reference = reference
         self._lineshape_func = lineshape_func
-       
+
+        if lineshape_func is None:
+            print('No lineshape function provided, using Holtsmark lineshape by default.')
+            self._hline_list = self._holtsmark_spectrum_prepare()
+            print(len(self._hline_list))
+
+
+    def _holtsmark_spectrum_prepare(self) -> list[HoltsmarkLine]:
+        '''
+        Simulate EIT signal for a given electric field using the Holtsmark lineshape.
+        '''
+        line_keys = self._reference.level_labels
+        efield_reference = self._reference.efield
+        stark_reference = self._reference.detunings[line_keys[0]]
+        
+        hline_list = []
+        for key in line_keys:
+             stark_reference = self._reference.detunings[key]
+             hline = HoltsmarkLine(efield_reference, stark_reference)
+             hline_list.append(hline)
+        print(f'Ready to simulate spectra with Holtsmark spectrum! Number of lines {len(hline_list)}')
+        return hline_list
+
+    
+    def holtsmark_spectrum(self, 
+                           freq: NDArray, 
+                           params: Parameters
+                           ) -> NDArray:
+        '''
+        Simulate EIT signal for a given electric field using the Holtsmark lineshape.
+        '''
+        efield = params['efield'].value
+        scale_factor = params['amp'].value
+        width = params['width'].value
+        E0 = params['E0'].value
+        r_amp = [params[f'rel_amp_{i}'].value for i in range(len(self._hline_list))]
+        spectrum = np.zeros_like(freq)
+        for hline, ai in zip(self._hline_list, r_amp):
+            spectrum += hline(freq, efield, width, E0, ai)
+        spectrum *= scale_factor
+        return spectrum
+
+    def holtsmark_spectrum_bg(self, 
+                           freq: NDArray, 
+                           params: Parameters
+                           ) -> NDArray:
+        '''
+        Simulate EIT signal for a given electric field using the Holtsmark lineshape.
+        '''
+        signal = self.holtsmark_spectrum(freq, params)
+        bg = self.bg_drifts(freq, params, poly_terms=2)
+        spectrum = signal + bg
+        return spectrum
+
     def signal(self, 
                freq: NDArray, 
                params: Parameters,
@@ -291,9 +342,9 @@ class SignalSimulator():
                   params: Parameters,
                   poly_terms: int = 2,
                   **kwargs):
-        coefs = [params[f'b{i}'].value for i in range(poly_terms-1) if params[f'b{i}'] is not None]
+        coefs = [params[f'b{i}'].value for i in range(poly_terms) if params[f'b{i}'] is not None]
         poly = np.poly1d(coefs)
-        if len(coefs) < poly_terms-1:
+        if len(coefs) < poly_terms:
             return np.zeros_like(freq)
         return poly(freq)
 
@@ -343,6 +394,9 @@ class DataFitter():
                  model: FitModel):
         self._data = data
         self._model = model
+    
+    def set_data(self, data: SpectralData):
+        self._data = data
 
     def fit(self, params: Parameters):
         result = minimize(self._model.residuals, 
@@ -353,8 +407,6 @@ class DataFitter():
         return result
 
 
-
-import numpy as np
 from sympy.physics.wigner import wigner_3j, wigner_6j
 
 class RydbergStarkEIT:
