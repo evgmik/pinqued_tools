@@ -13,8 +13,11 @@ import matplotlib.pyplot as plt
 
 import pandas as pd
 
+from scipy.interpolate import CubicSpline
 from lmfit import minimize, Parameters, fit_report, Model
 from lmfit.minimizer import MinimizerResult
+
+from arc import Rubidium85
 
 from pinqued_tools.spectroscopy.spectrum import SpectralData, Axes0D
 
@@ -108,6 +111,134 @@ class FieldReference():
 
         return detunings_interpolated
 
+    def interp_spline(self, efield: float) -> list[tuple[float, float]]:
+        '''
+        Alternative interpolation method using cubic splines.
+        '''
+        efield_reference = self._efield_interpolation_domain
+        detunings_reference = self._detunings_interpolation_domain
+
+        detunings_interpolated = []
+        for value in detunings_reference.values():
+            cs = CubicSpline(efield_reference, value)
+            f = cs(efield) # freq. position at `efield`
+            df_de = cs.derivative(1)(efield) # first derivative
+            detunings_interpolated.append((f, df_de))
+
+        return detunings_interpolated
+
+    def get_relative_intensities(self, 
+                                 init_state: tuple[float, float, float],
+                                 final_state: tuple[float, float, float]
+                                 ) -> list[float]:
+
+        atom = Rubidium85()
+
+        # 1. Define the states
+        n_int, l_int, j_int = init_state   # Intermediate 5P_3/2
+        n_ryd, l_ryd, j_ryd = final_state # Target 25D_5/2
+
+        # 2. Dictionary to hold the total intensity for each degenerate |m_j| pair
+        # For D_5/2, the allowed |m_j| values are 1/2, 3/2, 5/2
+        intensities = {0.5: 0.0, 1.5: 0.0, 2.5: 0.0}
+
+        # 3. Sum the transition strengths
+        # Perpendicular polarization is a superposition of q = +1 and q = -1
+        for q in [-1, 1]:
+            # Loop over all possible initial m_j states in the 5P_3/2 level
+            for mj_int in [-1.5, -0.5, 0.5, 1.5]:
+
+                # Calculate the resulting final m_j based on the selection rule
+                mj_ryd = mj_int + q
+
+                # Check if this final m_j actually exists in the J=5/2 state
+                if abs(mj_ryd) <= j_ryd:
+
+                    # Get the dipole matrix element (in units of ea_0)
+                    dipole = atom.getDipoleMatrixElement(n_int, l_int, j_int, mj_int, 
+                                                         n_ryd, l_ryd, j_ryd, mj_ryd, q)
+
+                    # The signal intensity is proportional to the square of the dipole element
+                    line_strength = abs(dipole)**2
+
+                    # Add it to the corresponding |m_j| component (since +/- m_j are degenerate)
+                    intensities[abs(mj_ryd)] += line_strength
+
+        # 4. Normalize the intensities relative to the strongest peak
+        max_intensity = max(intensities.values())
+        for mj in intensities:
+            intensities[mj] /= max_intensity
+
+        # 5. Output the results
+        print("Relative Intensities of 25D_5/2 Stark Components")
+        print("(Perpendicular Polarization, Delta m_j = +/- 1):")
+        print("-" * 50)
+        print(f"|m_j| = 1/2 peak: {intensities[0.5]:.3f}")
+        print(f"|m_j| = 3/2 peak: {intensities[1.5]:.3f}")
+        print(f"|m_j| = 5/2 peak: {intensities[2.5]:.3f}")
+
+        return [intensities[0.5], intensities[1.5], intensities[2.5]]
+
+    def get_relative_intensities_intermediate(self,) -> list[float]:
+
+        atom = Rubidium85()
+        # 1. Define the three levels of the EIT ladder
+        n_g, l_g, j_g = 5, 0, 0.5   # Initial: 5S_1/2
+        n_i, l_i, j_i = 5, 1, 1.5   # Intermediate: 5P_3/2
+        n_r, l_r, j_r = 25, 2, 2.5  # Final: 25D_5/2
+
+        # Dictionary to hold the total two-photon intensity for each degenerate |m_j| pair
+        intensities = {0.5: 0.0, 1.5: 0.0, 2.5: 0.0}
+
+        # 2. Helper function to calculate the dipole moment for linearly x-polarized light
+        def d_x(n1, l1, j1, mj1, n2, l2, j2, mj2):
+            """Calculates <2 | d_x | 1> using the spherical tensor components q = +/- 1"""
+            d_minus = atom.getDipoleMatrixElement(n1, l1, j1, mj1, n2, l2, j2, mj2, -1)
+            d_plus  = atom.getDipoleMatrixElement(n1, l1, j1, mj1, n2, l2, j2, mj2, 1)
+            return (d_minus - d_plus) / np.sqrt(2)
+
+        # 3. Sum over all possible initial ground states (unpolarized thermal gas)
+        for mj_g in [-0.5, 0.5]:
+
+            # Calculate the transition to every possible final m_j state in the Rydberg level
+            for mj_r in [-2.5, -1.5, -0.5, 0.5, 1.5, 2.5]:
+
+                # Initialize the coherent two-photon amplitude for this specific Initial -> Final path
+                M_2photon = 0.0
+
+                # Coherently sum the amplitudes over all possible intermediate 5P_3/2 states
+                for mj_i in [-1.5, -0.5, 0.5, 1.5]:
+
+                    # Amplitude for 780nm probe (Ground -> Intermediate)
+                    d1 = d_x(n_g, l_g, j_g, mj_g, n_i, l_i, j_i, mj_i)
+
+                    # Amplitude for 480nm coupling (Intermediate -> Rydberg)
+                    d2 = d_x(n_i, l_i, j_i, mj_i, n_r, l_r, j_r, mj_r)
+
+                    # Multiply the step amplitudes and add to the total coherent path
+                    M_2photon += (np.abs(d1) * np.abs(d2)) **2
+                # The true EIT line strength is the square of the total coherent amplitude
+                line_strength = M_2photon
+
+                # Add the intensity to the corresponding |m_j| component (since +/- m_j are degenerate)
+                abs_mj = round(abs(mj_r), 1)
+                intensities[abs_mj] += line_strength
+
+        # 4. Normalize the intensities relative to the strongest peak for easy fitting
+        max_intensity = max(intensities.values())
+        for mj in intensities:
+            intensities[mj] /= max_intensity
+
+        # 5. Output the results
+        print("Relative Two-Photon EIT Intensities (5S_1/2 -> 5P_3/2 -> 25D_5/2)")
+        print("Lasers: Both linearly polarized perpendicular to the DC field (x-axis)")
+        print("-" * 70)
+        print(f"|m_j| = 1/2 peak: {intensities[0.5]:.3f}")
+        print(f"|m_j| = 3/2 peak: {intensities[1.5]:.3f}")
+        print(f"|m_j| = 5/2 peak: {intensities[2.5]:.3f}")
+
+        return [intensities[0.5], intensities[1.5], intensities[2.5]]
+
 class SignalSimulator():
     '''
     Class that based on the Rydberg levels Stark splitting 
@@ -131,44 +262,63 @@ class SignalSimulator():
         width_0 = params['width_0'].value
         gradE_dr = params['gradE_dr'].value
         efield = params['efield'].value
-        r_amp = params.get('r_amp', None)
 
         ref = self._reference.interp(efield)
 
         spectrum = np.zeros_like(freq)
-        if r_amp is not None and len(r_amp) == len(ref):
-            for (fpos, df_de), amp in zip(ref, r_amp):
-                width = width_0  - df_de * gradE_dr
-                spectrum += amp*self._lineshape_func(freq, fpos, width, **kwargs)
-        else:
-            for (fpos, df_de) in ref:
-                width = width_0  - df_de * gradE_dr
-                spectrum += self._lineshape_func(freq, fpos, width, **kwargs)
+        r_amp = [params[f'rel_amp_{i}'].value for i in range(len(ref))]
+        for (fpos, df_de), amp in zip(ref, r_amp):
+            width = width_0  - df_de * gradE_dr
+            spectrum += amp*self._lineshape_func(freq, fpos, width, **kwargs)
         spectrum *= scale_factor
         return spectrum
     
     def bg_drifts(self, 
                   freq: NDArray, 
-                  params: dict,
-                  poly_terms: int = 3,
+                  params: Parameters,
+                  poly_terms: int = 2,
                   **kwargs):
-        coefs = [params.get(f'b{i}') for i in range(poly_terms) if params.get(f'b{i}') is not None]
+        coefs = [params[f'b{i}'].value for i in range(poly_terms-1) if params[f'b{i}'] is not None]
         poly = np.poly1d(coefs)
-        if len(coefs) < poly_terms:
+        if len(coefs) < poly_terms-1:
             return np.zeros_like(freq)
         return poly(freq)
+
+    def signal_with_bg(self, 
+                       freq: NDArray, 
+                       params: Parameters,
+                       poly_terms: int = 3,
+                       **kwargs) -> NDArray[np.float64]:
+        signal = self.signal(freq, params, **kwargs)
+        bg = self.bg_drifts(freq, params, poly_terms=poly_terms)
+        return signal + bg
+
+    def signal_with_bg_shifted(self, 
+                       freq: NDArray, 
+                       params: Parameters,
+                       poly_terms: int = 3,
+                       **kwargs) -> NDArray[np.float64]:
+        f_shifted = freq - params['f_shift'].value
+        signal = self.signal(f_shifted, params, **kwargs)
+        bg = self.bg_drifts(f_shifted, params, poly_terms=poly_terms)
+        return signal + bg
         
 class FitModel():
     '''
     Class for fitting experimental EIT spectra using the SignalSimulator.
     '''
     def __init__(self, 
-                 simulator: SignalSimulator
+                 fit_func: Callable
                  ):
-        self._simulator = simulator
-
-    def residuals(self, params, freq, data, data_err):
-        signal = self._simulator.signal(freq, params)
+        self._fit_func = fit_func
+        
+    def residuals(self, 
+                  params: Parameters,
+                  freq: NDArray, 
+                  data: NDArray, 
+                  data_err: NDArray|None = None
+                  ) -> NDArray:
+        signal = self._fit_func(freq, params)
         difference = data - signal
         if data_err is None:
             return difference
@@ -182,11 +332,119 @@ class DataFitter():
         self._model = model
 
     def fit(self, params: Parameters):
-        result = minimize(self._model.residuals, params, 
-                            args=(self._data.axes.f, 
-                                  self._data.signal, 
-                                  self._data.signal_err))
+        result = minimize(self._model.residuals, 
+                          params, 
+                          args=(self._data.axes.f, 
+                                self._data.signal, 
+                                self._data.signal_err))
         return result
+
+
+
+import numpy as np
+from sympy.physics.wigner import wigner_3j, wigner_6j
+
+class RydbergStarkEIT:
+    """
+    Calculates relative EIT intensities for CW two-photon transitions 
+    in the Hyperfine Paschen-Back regime (strong DC electric field).
+    Assumes perpendicularly polarized lasers (x-axis).
+    """
+    
+    def __init__(self, I=2.5, J_g=0.5, F_g=3, J_i=1.5, J_r=2.5):
+        """
+        Initialize the atomic system angular momenta.
+        Default values are for 85Rb: 5S_1/2(F=3) -> 5P_3/2 -> nD_5/2
+        """
+        self.I = I
+        self.J_g = J_g
+        self.F_g = F_g
+        self.J_i = J_i
+        self.J_r = J_r
+
+    def _hf_dipole(self, J1, F1, mF1, J2, F2, mF2, q):
+        """Coupled to Coupled transition (Ground -> Intermediate)"""
+        six_j = float(wigner_6j(J2, J1, 1, F1, F2, self.I))
+        red_F = ((-1)**(J2 + self.I + F1 + 1) * np.sqrt((2*F2 + 1) * (2*F1 + 1)) * six_j)
+        three_j = float(wigner_3j(F2, 1, F1, -mF2, q, mF1))
+        
+        return ((-1)**(F2 - mF2) * three_j * red_F)
+
+    def _pb_dipole(self, Ji, Fi, mFi, Jr, mJr, mI, q):
+        """Coupled to Uncoupled transition (Intermediate -> Rydberg)"""
+        mJi = mFi - mI
+        if abs(mJi) > Ji: 
+            return 0.0
+            
+        cg_coeff = float((-1)**(Ji - self.I + mFi) * np.sqrt(2*Fi + 1) * wigner_3j(Ji, self.I, Fi, mJi, mI, -mFi))
+        
+        j_dipole = float((-1)**(Jr - mJr) * wigner_3j(Jr, 1, Ji, -mJr, q, mJi))
+        
+        return cg_coeff * j_dipole
+
+    def _probe_drive_x(self, F_i, mFi, mFg):
+        """Amplitude for x-polarized 780 nm probe"""
+        d_minus = self._hf_dipole(self.J_g, self.F_g, mFg, self.J_i, F_i, mFi, -1)
+        d_plus  = self._hf_dipole(self.J_g, self.F_g, mFg, self.J_i, F_i, mFi, 1)
+        return (d_minus - d_plus) / np.sqrt(2)
+
+    def _coupling_drive_x(self, F_i, mFi, mJr, mI):
+        """Amplitude for x-polarized 480 nm coupling"""
+        d_minus = self._pb_dipole(self.J_i, F_i, mFi, self.J_r, mJr, mI, -1)
+        d_plus  = self._pb_dipole(self.J_i, F_i, mFi, self.J_r, mJr, mI, 1)
+        return (d_minus - d_plus) / np.sqrt(2)
+
+    def calculate_spectrum(self, detunings, gamma=6.0, pop_weights=None):
+        """
+        Calculates the relative intensities of the |m_J| Stark components.
+        
+        Args:
+            detunings (dict): {F_i: detuning_in_MHz} for the intermediate states.
+            gamma (float): Natural linewidth of the intermediate state (MHz).
+            pop_weights (dict): {mFg: population_weight} to simulate optical pumping.
+            
+        Returns:
+            dict: {|m_J|: relative_intensity} normalized to the maximum peak.
+        """
+        if pop_weights is None:
+            # Default to an unpolarized thermal distribution
+            pop_weights = {mFg: 1.0 for mFg in np.arange(-self.F_g, self.F_g + 1)}
+            
+        intensities_mJr = {}
+
+        # Loop over initial ground states
+        for mFg in np.arange(-self.F_g, self.F_g + 1):
+            
+            # Loop over uncoupled final Rydberg states
+            for mJr in np.arange(-self.J_r, self.J_r + 1):
+                for mI in np.arange(-self.I, self.I + 1):
+                    
+                    M_2photon = 0.0 + 0.0j
+                    
+                    # Coherent sum over intermediate hyperfine paths
+                    for F_i, detuning in detunings.items():
+                        for mFi in np.arange(-F_i, F_i + 1):
+                            
+                            d1 = self._probe_drive_x(F_i, mFi, mFg)
+                            d2 = self._coupling_drive_x(F_i, mFi, mJr, mI)
+                            
+                            if d1 != 0 and d2 != 0:
+                                complex_detuning = detuning - 1j * (gamma / 2.0)
+                                M_2photon += (d1 * d2) / complex_detuning
+                    
+                    line_strength = np.abs(M_2photon)**2 * pop_weights.get(mFg, 0)
+                    
+                    if line_strength > 1e-8:
+                        abs_mJr = round(abs(mJr), 1)
+                        if abs_mJr not in intensities_mJr:
+                            intensities_mJr[abs_mJr] = 0.0
+                        intensities_mJr[abs_mJr] += line_strength
+
+        # Normalize outputs
+        max_val = max(intensities_mJr.values())
+        return {mJ: val / max_val for mJ, val in sorted(intensities_mJr.items())}
+
+
 
 
 #%%
