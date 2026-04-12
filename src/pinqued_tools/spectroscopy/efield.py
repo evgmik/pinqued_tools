@@ -76,7 +76,20 @@ class FieldReference():
     def level_labels(self) -> list[str]:
         return list(self._detunings.keys())
     
-    def interp(self, efield: float) -> list[tuple[float, float]]:
+    def interp(self, efield: float, method='spline') -> list[tuple[float, float]]:
+        '''
+        Interpolates between points of the reference for a given E-field.
+        Calculates 1st derivative of the reference f(E) dependence.
+        '''
+        if method == 'poly':
+            return self.interp_poly(efield)
+        elif method == 'spline':
+            return self.interp_spline(efield)
+        else:
+            raise ValueError("Invalid interpolation method. Choose 'poly' or 'spline'.")
+
+
+    def interp_poly(self, efield: float) -> list[tuple[float, float]]:
         '''
         Interpolates between points of the reference for a given E-field.
         Calculates 1st derivative of the reference f(E) dependence.
