@@ -16,6 +16,9 @@ from numpy.typing import NDArray
 from abc import ABC, abstractmethod
 import copy
 
+
+import pybaselines as pbl
+from scipy.signal import find_peaks
 # -------------------- Axes classes -------------------------
 @dataclass 
 class BaseAxes(ABC):
@@ -241,17 +244,96 @@ class Calibration():
     known separations and determines time-to-frequency 
     conversion factor
     '''
-    def __init__(self):
-        pass
+    def __init__(self,
+                 time: NDArray|None = None,
+                 signal: NDArray|None = None, 
+                 trigger_signal: NDArray|None = None,
+                 d_peaks_separation: float = 1.0):
+        
+        self._d_peaks_separation = d_peaks_separation
+        
+        self._time = time
+        self._signal = signal
+        self._trigger_signal = trigger_signal
 
-    def fit(self):
-        pass
+        self._background = None
+        self._conversion_factor = None
+        self._main_peak_pos = None
 
-    def get_conversion_factor(self):
-        pass
+    def set_data(self, 
+                 time: NDArray, 
+                 signal: NDArray,
+                 trigger_signal: NDArray|None = None
+                 ):
+        self._time = time
+        self._signal = signal
+        self._trigger_signal = trigger_signal
 
-    def time_to_freq(self):
-        pass
+    def correct_trigger_event(self, trigger_threshold: float = 2.5):
+        if self._trigger_signal is None or self._time is None:
+            raise ValueError("Trigger signal and time data must be set before correcting.")
+        # Implementation for correcting trigger event by 
+        # finding the first index where the trigger signal exceeds the threshold
+        trigger_indices = np.where(self._trigger_signal > trigger_threshold)[0]
+        if len(trigger_indices) == 0:
+            raise ValueError("No trigger found in the trigger signal.")
+        trigger_index = trigger_indices[0]
+        time_shift = self._time[trigger_index]
+        self._time = self._time - time_shift    
+        
+    def remove_baseline_fastchom(self,
+                        fixed_threshold: float = 1.5e-4,
+                        half_window: int = 2):
+        if self._time is None or self._signal is None:
+            raise ValueError("Time and signal data must be set before removing baseline.")
+        baseline_fitter = pbl.Baseline(x_data = self._time)
+
+        bg_fit, params = baseline_fitter.fastchrom(self._signal, 
+                                                   half_window, 
+                                                   threshold=fixed_threshold)
+        yd = self._signal - bg_fit
+
+        self._background = bg_fit
+        self._signal = yd
+
+    def time_to_freq(self, **find_peaks_kwargs):
+        if self._signal is None or self._time is None:
+            raise ValueError("Signal and time data must be available for time-to-frequency conversion.")
+        # 1. Find peaks in the clean signal
+        ppos, ppar = find_peaks(self._signal, **find_peaks_kwargs)
+        if len(ppos) < 2:
+            raise ValueError("At least two peaks must be found for time-to-frequency conversion.")
+        # 2. Calculate time separation between the peaks
+        t_peaks_separation = self._time[ppos[1]] - self._time[ppos[0]]
+        # 3. Calculate time-to-frequency conversion factor
+        conversion_factor = self._d_peaks_separation / t_peaks_separation
+        self._conversion_factor = conversion_factor
+        self._main_peak_pos = ppos[1]
+        return conversion_factor, ppos[0], ppos[1]
+
+    @property
+    def time(self):
+        if self._time is None:
+            raise ValueError("Time data has not been shifted yet. Call match_trigger() first.")
+        return self._time
+
+    @property
+    def background(self):
+        if self._background is None:
+            raise ValueError("Baseline has not been removed yet. Call remove_baseline() first.")
+        return self._background
+    
+    @property
+    def signal(self):
+        if self._signal is None:
+            raise ValueError("Clean signal has not been calculated yet. Call remove_baseline() first.")
+        return self._signal
+    
+    @property
+    def freq(self):
+        if self._time is None or self._conversion_factor is None:
+            raise ValueError("Time data and conversion factor must be set for frequency calculation.")
+        return (self._time - self._time[self._main_peak_pos]) * self._conversion_factor
 
 #%%
 if __name__=='__main__':
