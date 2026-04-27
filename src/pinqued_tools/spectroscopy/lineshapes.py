@@ -106,14 +106,14 @@ class BaseSpectralLine(ABC):
                  amplitude: float = 1.0) -> NDArray:
         raise NotImplementedError("Subclasses must implement the __call__ method.")
 
-
-
-
-
+import numpy as np
+from numpy.typing import NDArray
+from scipy.interpolate import interp1d, RegularGridInterpolator
 
 class HoltsmarkLine(BaseSpectralLine):
     '''
     Holtsmark lineshape as a subclass of `BaseSpectralLine`
+    Supports 1D scalar, 2D vector, and ultra-fast 3D Look-Up Table (LUT) models.
     '''
     def __init__(self, 
                  efield_reference: NDArray,
@@ -131,108 +131,156 @@ class HoltsmarkLine(BaseSpectralLine):
         self.E_grid = np.linspace(1e-3, efield_reference[-1], n_efield_points)
         self.dE = self.E_grid[1] - self.E_grid[0]
         
-        # Pre-calculate the frequency shifts for the integration grid
-        # This only happens once during initialization!
-        self.shifts = self.stark_interp(self.E_grid)
-        
         # 2. Pre-compute the Holtsmark H(beta) interpolator for speed
         betas = np.linspace(0, 20.0, 2000)
         h_vals = np.array([self._integrate_holtsmark(b) for b in betas])
         self.H_beta_interp = interp1d(betas, h_vals, kind='cubic', bounds_error=False, fill_value=0.0)
+        
+        # 3. Placeholder for the LUT 3D Interpolator
+        self._lut_interpolator = None
+
+    def build_lut(self, 
+                  freq_grid: NDArray, 
+                  efield_grid: NDArray, 
+                  E0_grid: NDArray, 
+                  width_grid: NDArray,  # <-- Added width array
+                  base_model: str = '2d'):
+        """
+        Pre-calculates a 4D Lineshape Library (E0, efield, width, freq) for instant fitting.
+        """
+        print(f"Building 4D Lineshape Library: {len(E0_grid)}x{len(efield_grid)}x{len(width_grid)}x{len(freq_grid)} points...")
+        
+        # 1. Allocate the 4D block of memory
+        library = np.zeros((len(E0_grid), len(efield_grid), len(width_grid), len(freq_grid)))
+        
+        # 2. Populate the grid
+        for i, E0 in enumerate(E0_grid):
+            for j, efield in enumerate(efield_grid):
+                for k, width in enumerate(width_grid):  # <-- Added width loop
+                    
+                    if base_model == '2d':
+                        spectrum = self.line2d(freq=freq_grid, efield=efield, width=width, E0=E0, amplitude=1.0)
+                    else:
+                        spectrum = self.line1d(freq=freq_grid, efield=efield, width=width, E0=E0, amplitude=1.0)
+                    
+                    library[i, j, k, :] = spectrum
+                
+        # 3. Create the 4-Dimensional Interpolator
+        self._lut_interpolator = RegularGridInterpolator(
+            (E0_grid, efield_grid, width_grid, freq_grid),  # <-- 4-tuple
+            library, 
+            bounds_error=False, 
+            fill_value=0.0
+        )
+        print("LUT Build Complete.")
+
+    def line_lut(self, freq: NDArray, 
+                 efield: float = 0.0, 
+                 width: float = 20.0, 
+                 E0: float = 3.0, 
+                 amplitude: float = 1.0) -> NDArray:
+        """
+        Instant lineshape extraction from the pre-computed 4D Look-Up Table.
+        """
+        if self._lut_interpolator is None:
+            raise RuntimeError("LUT not initialized. Call `build_lut()` before using model='lut'.")
+            
+        # Create a query array of shape (N, 4): [E0, efield, width, freq]
+        query_points = np.zeros((len(freq), 4))
+        query_points[:, 0] = E0
+        query_points[:, 1] = efield
+        query_points[:, 2] = width     # <-- Inject dynamic width here
+        query_points[:, 3] = freq 
+        
+        # Extract the interpolated spectrum in microseconds
+        spectrum = self._lut_interpolator(query_points)
+        
+        return amplitude * spectrum
 
     def __call__(self, freq: NDArray, 
-                 efield: float = 0.0, # Units of `freq`
+                 efield: float = 0.0, # Units of electric field strength
                  width: float = 20.0, # Units of `freq`
-                 E0: float = 3.0, # Units of electric field strength
+                 E0: float = 3.0,     # Units of electric field strength
                  amplitude: float = 1.0,
-                 model: str = '2d') -> NDArray:
+                 model: str = 'lut') -> NDArray:
+        
         if model == '1d':
             return self.line1d(freq, efield, width, E0, amplitude)
         elif model == '2d':
             return self.line2d(freq, efield, width, E0, amplitude)
+        elif model == 'lut':
+            return self.line_lut(freq, efield, width, E0, amplitude)
         else:
-            raise ValueError("Invalid model. Choose '1d' or '2d'.")
+            raise ValueError("Invalid model. Choose '1d', '2d', or 'lut'.")
 
     def line1d(self, freq: NDArray, 
-                 efield: float = 0.0, # Units of `freq`
-                 width: float = 20.0, # Units of `freq`
-                 E0: float = 3.0, # Units of electric field strength
+                 efield: float = 0.0, 
+                 width: float = 20.0, 
+                 E0: float = 3.0, 
                  amplitude: float = 1.0) -> NDArray:
-        # 1. Calculate the Holtsmark probability weights for the E_grid
-        # H(E) = (1/E_0) * H(beta) where beta = E / E_0
-        betas = (self.E_grid - efield) / E0
+        
+        # [CORRECTED]: Evaluate Holtsmark ONLY on the pure microfield magnitude
+        betas = self.E_grid / E0
         weights = (1.0 / E0) * self.H_beta_interp(betas) * self.dE
         
-        # 2. Build the Lorentzian Matrix (Broadcasting magic happens here)
-        # nu_grid becomes a column vector (N x 1)
-        # self.shifts is a row vector (1 x M)
-        # detunings matrix becomes shape (N x M)
-        shifts = self.stark_interp(self.E_grid)
+        # Calculate Total Electric Field (Scalar Approximation)
+        E_tot = efield + self.E_grid
+        
+        # Clip to avoid interpolation errors and get Stark shifts
+        E_tot_clear = np.clip(E_tot, self._efield_reference[0], self._efield_reference[-1])
+        shifts = self.stark_interp(E_tot_clear)
+        
         nu_col = freq[:, np.newaxis]
-        detunings = nu_col - self.shifts[np.newaxis, :]
+        detunings = nu_col - shifts[np.newaxis, :]
         
         gamma_half = width / 2.0
         lorentzian_matrix = (gamma_half**2) / (detunings**2 + gamma_half**2)
         
-        # 3. Perform the integration as a dot product
-        # Multiply the (N x M) matrix by the (M,) weights vector to get an (N,) spectrum
         spectrum = np.dot(lorentzian_matrix, weights)
         
-        # Normalize area
-        spectrum /= np.trapz(spectrum, freq)
-        
+        area = np.trapz(spectrum, freq)
+        if area > 0:
+            spectrum /= area
+            
         return amplitude * spectrum
     
     def line2d(self, freq: NDArray, 
-               efield: float = 0.0,  # External DC field magnitude
-               width: float = 20.0,  # Homogeneous linewidth (gamma)
-               E0: float = 3.0,      # Normal microfield (plasma density)
+               efield: float = 0.0, 
+               width: float = 20.0, 
+               E0: float = 3.0, 
                amplitude: float = 1.0) -> NDArray:
         """
         Generates the lineshape using a 2D vector summation of the external 
         DC field and the isotropic Holtsmark microfield.
         """
-        # Ensure theta grid exists (fallback if you haven't added it to __init__)
         if not hasattr(self, 'theta_grid'):
             self.theta_points = 20
             self.theta_grid = np.linspace(0, np.pi, self.theta_points)
             self.dTheta = self.theta_grid[1] - self.theta_grid[0]
 
-        # 1. Evaluate Holtsmark ONLY on the microfield grid
-        # self.E_grid represents Em (microfield magnitude) here
         betas = self.E_grid / E0
         H_vals = (1.0 / E0) * self.H_beta_interp(betas)
 
-        # 2. Vector Math: Create 2D meshgrids for Em and Theta
-        # Em_matrix shape: (M, T). theta_matrix shape: (M, T)
         Em_matrix, theta_matrix = np.meshgrid(self.E_grid, self.theta_grid, indexing='ij')
 
-        # 3. Calculate Total Electric Field Magnitude (Law of Cosines)
         E_tot = np.sqrt(efield**2 + Em_matrix**2 + 2 * efield * Em_matrix * np.cos(theta_matrix))
 
-        # 4. Get Stark shifts for the combined field
         E_tot_clear = np.clip(E_tot, self._efield_reference[0], self._efield_reference[-1])
         shifts_2d = self.stark_interp(E_tot_clear)
 
-        # 5. Calculate joint probability weights 
-        # Solid angle fraction for an isotropic field is: 0.5 * sin(theta) * dTheta
         weights_2d = H_vals[:, np.newaxis] * self.dE * 0.5 * np.sin(theta_matrix) * self.dTheta
 
-        # Flatten the matrices to 1D vectors for lightning-fast broadcasting
         shifts_flat = shifts_2d.flatten()
         weights_flat = weights_2d.flatten()
 
-        # 6. Build the Lorentzian Matrix (Broadcasting)
         nu_col = freq[:, np.newaxis]
         detunings = nu_col - shifts_flat[np.newaxis, :]
 
         gamma_half = width / 2.0
         lorentzian_matrix = (gamma_half**2) / (detunings**2 + gamma_half**2)
 
-        # 7. Perform integration as a dot product
         spectrum = np.dot(lorentzian_matrix, weights_flat)
 
-        # 8. Normalize area to 1, then apply global amplitude
         area = np.trapz(spectrum, freq)
         if area > 0:
             spectrum /= area

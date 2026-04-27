@@ -267,7 +267,6 @@ class SignalSimulator():
             self._hline_list = self._holtsmark_spectrum_prepare()
             print(len(self._hline_list))
 
-
     def _holtsmark_spectrum_prepare(self) -> list[HoltsmarkLine]:
         '''
         Simulate EIT signal for a given electric field using the Holtsmark lineshape.
@@ -278,9 +277,18 @@ class SignalSimulator():
         
         hline_list = []
         for key in line_keys:
+             print(f'Preparing Holtsmark line for {key}...')
              stark_reference = self._reference.detunings[key]
              hline = HoltsmarkLine(efield_reference, stark_reference)
+             # 1. Define your 4D parameter space
+             freq_grid = np.linspace(-1200, 400, 300)  # <-- The frequency axis for the LUT
+             efield_grid = np.linspace(0.0, 45.0, 30)
+             E0_grid = np.linspace(0.01, 20.0, 20)
+             width_grid = np.linspace(20.0, 50.0, 10)  # <-- The new dimension
+             hline.build_lut(freq_grid, efield_grid, E0_grid, width_grid, base_model='2d')
              hline_list.append(hline)
+             print(f'Finished preparing Holtsmark line for {key}.')
+
         print(f'Ready to simulate spectra with Holtsmark spectrum! Number of lines {len(hline_list)}')
         return hline_list
 
