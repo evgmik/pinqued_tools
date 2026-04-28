@@ -34,7 +34,8 @@ dependencies = [
     "pandas",
     "scikit-learn",
     "lmfit",
-    "pytest"
+    "pytest",
+    "pybaselines"
 ]
 
 [project.urls]
