@@ -297,36 +297,4 @@ class HoltsmarkLine(BaseSpectralLine):
         
 #%%
 if __name__=='__main__':
-    # Apply custom plotting style
-    from pinqued_tools.analysis.plotting import set_mpl_style
-    set_mpl_style()
-
-    # 1. Define list with parameters for each spectral line
-    params = [
-        {'func': gaussian, #<---- NOTE: spectral line function is a dict entry
-         'fpos': 0.0,
-         'width': 20,
-         'normalized': False},
-        {'func': lorentzian, 
-         'fpos': 0.0,
-         'width': 20,
-         'normalized': False},
-        {'func': holtsmarkian, 
-         'fpos': 0.0,
-         'width': 20,
-         'normalized': False},
-    ]
-
-    # 2. Frequency detunings -100 to 100 MHz
-    x = np.linspace(-100,100,1000)
-
-    # 3. Plot all available spectral lines
-    labels = ['Gauss', 'Lorentz', 'Holtsmark']
-    fig, ax = plt.subplots()
-    for p, ll in zip(params, labels):
-        y = lineshape(x, p) # Calculate spectral lineshape
-        ax.plot(x,y, linewidth=1.5, label=ll)
-    ax.set_xlabel('Frequency (MHz)')
-    ax.set_ylabel('EIT Signal $S$ (arb. units)')
-    ax.legend()
 # %%
