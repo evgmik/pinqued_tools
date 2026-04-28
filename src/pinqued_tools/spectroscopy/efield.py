@@ -537,6 +537,7 @@ class RydbergStarkEIT:
         self.F_g = F_g
         self.J_i = J_i
         self.J_r = J_r
+        print('WARNING: This class is deprecated. Stop using it!')
 
     def _hf_dipole(self, J1, F1, mF1, J2, F2, mF2, q):
         """Coupled to Coupled transition (Ground -> Intermediate)"""
