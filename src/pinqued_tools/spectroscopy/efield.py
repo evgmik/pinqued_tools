@@ -424,7 +424,7 @@ class SignalSimulator():
         r_amp = [params[f'rel_amp_{i}'].value for i in range(len(ref))]
         for (fpos, df_de), amp in zip(ref, r_amp):
             width = width_0  - df_de * gradE_dr
-            spectrum += amp*self._lineshape_func(freq, fpos, width, **kwargs)
+            spectrum += amp * self._lineshape_func(freq, fpos, width, **kwargs)
         spectrum *= scale_factor
         return spectrum
     
@@ -498,10 +498,30 @@ class DataFitter():
         return result
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 from sympy.physics.wigner import wigner_3j, wigner_6j
 
 class RydbergStarkEIT:
     """
+    !!!!!! THIS CLASS IS DEPRECATED !!!!!!
     Calculates relative EIT intensities for CW two-photon transitions 
     in the Hyperfine Paschen-Back regime (strong DC electric field).
     Assumes perpendicularly polarized lasers (x-axis).
@@ -600,6 +620,55 @@ class RydbergStarkEIT:
         max_val = max(intensities_mJr.values())
         return {mJ: val / max_val for mJ, val in sorted(intensities_mJr.items())}
 
+    def calculate_spectrum_phi(self, detunings, phi_angle=0.0, gamma=6.0, pop_weights=None):
+        """
+        Calculates the relative intensities of the |m_J| Stark components.
+        
+        Args:
+            detunings (dict): {F_i: detuning_in_MHz} for the intermediate states.
+            gamma (float): Natural linewidth of the intermediate state (MHz).
+            pop_weights (dict): {mFg: population_weight} to simulate optical pumping.
+            
+        Returns:
+            dict: {|m_J|: relative_intensity} normalized to the maximum peak.
+        """
+        if pop_weights is None:
+            # Default to an unpolarized thermal distribution
+            pop_weights = {mFg: 1.0 for mFg in np.arange(-self.F_g, self.F_g + 1)}
+            
+        intensities_mJr = {}
+
+        # Loop over initial ground states
+        for mFg in np.arange(-self.F_g, self.F_g + 1):
+            
+            # Loop over uncoupled final Rydberg states
+            for mJr in np.arange(-self.J_r, self.J_r + 1):
+                for mI in np.arange(-self.I, self.I + 1):
+                    
+                    M_2photon = 0.0 + 0.0j
+                    
+                    # Coherent sum over intermediate hyperfine paths
+                    for F_i, detuning in detunings.items():
+                        for mFi in np.arange(-F_i, F_i + 1):
+                            
+                            d1 = self._probe_drive_x(F_i, mFi, mFg)
+                            d2 = self._coupling_drive_x(F_i, mFi, mJr, mI)
+                            
+                            if d1 != 0 and d2 != 0:
+                                complex_detuning = detuning - 1j * (gamma / 2.0)
+                                M_2photon += (d1 * d2) / complex_detuning
+                    
+                    line_strength = np.abs(M_2photon)**2 * pop_weights.get(mFg, 0)
+                    
+                    if line_strength > 1e-8:
+                        abs_mJr = round(abs(mJr), 1)
+                        if abs_mJr not in intensities_mJr:
+                            intensities_mJr[abs_mJr] = 0.0
+                        intensities_mJr[abs_mJr] += line_strength
+
+        # Normalize outputs
+        max_val = max(intensities_mJr.values())
+        return {mJ: val / max_val for mJ, val in sorted(intensities_mJr.items())}
 
 
 
