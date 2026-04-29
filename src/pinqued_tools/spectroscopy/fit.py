@@ -31,7 +31,7 @@ class FitModel():
 class DataFitter():
     def __init__(self, 
                  data: SpectralData,
-                 model: FitModel):
+                 model: FitModel|GPPoissonModel1D):
         self._data = data
         self._model = model
     
