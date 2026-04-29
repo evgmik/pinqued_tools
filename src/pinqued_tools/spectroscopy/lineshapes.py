@@ -238,7 +238,7 @@ class HoltsmarkLine(BaseSpectralLine):
         
         spectrum = np.dot(lorentzian_matrix, weights)
         
-        area = np.trapz(spectrum, freq)
+        area = np.trapezoid(spectrum, freq)
         if area > 0:
             spectrum /= area
             
