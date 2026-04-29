@@ -175,33 +175,55 @@ class HoltsmarkLine(BaseSpectralLine):
         print("LUT Build Complete.")
 
     def line_lut(self, freq: NDArray, 
-                 efield: float = 0.0, 
-                 width: float = 20.0, 
-                 E0: float = 3.0, 
-                 amplitude: float = 1.0) -> NDArray:
+                 efield: float|NDArray = 0.0, 
+                 width: float|NDArray = 20.0, 
+                 E0: float|NDArray = 3.0, 
+                 amplitude: float|NDArray = 1.0) -> NDArray:
         """
         Instant lineshape extraction from the pre-computed 4D Look-Up Table.
+        Supports scalar inputs or 1D arrays for spatial variations.
         """
         if self._lut_interpolator is None:
             raise RuntimeError("LUT not initialized. Call `build_lut()` before using model='lut'.")
             
-        # Create a query array of shape (N, 4): [E0, efield, width, freq]
-        query_points = np.zeros((len(freq), 4))
-        query_points[:, 0] = E0
-        query_points[:, 1] = efield
-        query_points[:, 2] = width     # <-- Inject dynamic width here
-        query_points[:, 3] = freq 
+        efield = np.asarray(efield)
+        width = np.asarray(width)
+        E0 = np.asarray(E0)
         
-        # Extract the interpolated spectrum in microseconds
+        # Scalar parameters: return 1D frequency spectrum
+        if efield.ndim == 0 and width.ndim == 0 and E0.ndim == 0:
+            query_points = np.zeros((len(freq), 4))
+            query_points[:, 0] = E0
+            query_points[:, 1] = efield
+            query_points[:, 2] = width
+            query_points[:, 3] = freq 
+            spectrum = self._lut_interpolator(query_points)
+            return amplitude * spectrum
+            
+        # Array parameters (spatial grid): return 2D array (spatial x frequency)
+        efield_grid, freq_grid = np.meshgrid(efield, freq, indexing='ij')
+        width_grid, _ = np.meshgrid(width, freq, indexing='ij')
+        E0_grid, _ = np.meshgrid(E0, freq, indexing='ij')
+        
+        query_points = np.zeros((efield_grid.size, 4))
+        query_points[:, 0] = E0_grid.ravel()
+        query_points[:, 1] = efield_grid.ravel()
+        query_points[:, 2] = width_grid.ravel()
+        query_points[:, 3] = freq_grid.ravel()
+        
         spectrum = self._lut_interpolator(query_points)
+        spectrum = spectrum.reshape(efield_grid.shape)
         
+        if np.ndim(amplitude) > 0:
+            amplitude = amplitude[:, np.newaxis]
+            
         return amplitude * spectrum
 
     def __call__(self, freq: NDArray, 
-                 efield: float = 0.0, # Units of electric field strength
-                 width: float = 20.0, # Units of `freq`
-                 E0: float = 3.0,     # Units of electric field strength
-                 amplitude: float = 1.0,
+                 efield: float|NDArray = 0.0, 
+                 width: float|NDArray = 20.0, 
+                 E0: float|NDArray = 3.0,     
+                 amplitude: float|NDArray = 1.0,
                  model: str = 'lut') -> NDArray:
         
         if model == '1d':

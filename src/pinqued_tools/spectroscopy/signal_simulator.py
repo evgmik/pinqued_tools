@@ -142,76 +142,64 @@ class SignalSimulator():
         signal = self.signal(f_shifted, params, **kwargs)
         bg = self.bg_drifts(f_shifted, params, poly_terms=poly_terms)
         return signal + bg
+    
+
+class GPPoissonSignalSimulator1D(SignalSimulator):
+    def __init__(self, 
+                 reference: FieldReference,
+                 px_size: float,
+                 lineshape_func: Callable|None = None
+                 ):
+        super().__init__(reference, lineshape_func)
+        self.px_size = px_size
+
+    def holtsmark_spectrum(self, 
+                           freq: NDArray, 
+                           params: Parameters,
+                           efield: float|NDArray|None = None,
+                           grad_vec: float|NDArray|None = None
+                           ) -> NDArray:
+        '''
+        Simulate EIT signal for a given electric field using the Holtsmark lineshape.
+        Can accept spatial arrays for efield and grad_vec to vectorize the calculation.
+        '''
+        if efield is None:
+            efield = params['efield'].value
+        if grad_vec is None:
+            grad_vec = params['grad_vec'].value
+            
+        scale_factor = params['amp'].value
+        width = params['width'].value
+
+        # THE LINK: Calculate Microscopic (Holtsmark) Scale E0
+        # eps0 / e ≈ 5.5e7 (in mm^-3 units if z is mm)
+        n_i_local = 5.5e7 * np.abs(grad_vec) 
+        E0_local = 1.5e-7 * (n_i_local)**(2/3) # Example scaling constant
+
+        # 1. Get Stark shift and sensitivity from reference
+        # Note: spectral_sim.interp returns a list of (fpos, df_de) tuples
+        # We take the first dominant line for this 1D model
+        f0_dfdE_list_tuples = self._reference.interp(efield)
+        dfdE = [np.asarray(tup[1]) for tup in f0_dfdE_list_tuples]
+
+        r_amp = [params[f'rel_amp_{i}'].value for i in range(len(self._hline_list))]
+        
+        # Handle 1D (spatial) evaluation
+        if np.ndim(efield) > 0:
+            spectrum = np.zeros((len(efield), len(freq)))
+        else:
+            spectrum = np.zeros_like(freq)
+            
+        for i, (hline, ai) in enumerate(zip(self._hline_list, r_amp)):
+            width_smear = np.sqrt(width**2 + (np.abs(dfdE[i] * grad_vec) * self.px_size)**2)
+            # Explicitly trigger 'lut' model to pass arrays effectively
+            spectrum += hline(freq, efield=efield, width=width + width_smear, E0=E0_local, amplitude=ai, model='lut')
+            
+        spectrum *= scale_factor
+        return spectrum
 
 #%%
 if __name__=='__main__':
-    # ----------------- Usage example ----------------------
-    from pinqued_tools.spectroscopy.lineshapes import holtsmarkian
-    from pinqued_tools.analysis.plotting import set_mpl_style
-    set_mpl_style()
-
-    # Read reference Rydberg splittings
-    ref_path = 'G:\\My Drive\\Vaults\\WnM-AMO\\__Scripts\\calculated_stark_maps\\stark_map_25D_MHz.csv'
-    ref = FieldReference(ref_path)
-
-    # define parameters of the spectrum
-    params = {'efield': 0.6,
-              'amp': 150, 
-              'width_0': 30, 
-              'gradE_dr': 2,
-              'rel_amp': [0.6, 0.6, 1.0, 1.0, 1.0],
-              'b0': 1e-3, 'b1': 1e-2, 'b3': 1e-4}
-    
-    params_sim = Parameters()
-    for key, value in params.items():
-        if key == 'rel_amp':
-            continue
-        params_sim.add(key, value=value)
-    
-    params_lmfit = Parameters()
-    params_lmfit.add('efield', value=params['efield'], min=-0.1)
-    params_lmfit.add('amp', value=params['amp']-20.0)
-    params_lmfit.add('width_0', value=params['width_0']+10.0)
-    params_lmfit.add('gradE_dr', value=params['gradE_dr']-1.0)
-
-
-    # Instantiate signal simulator object
-    sim = SignalSimulator(ref, holtsmarkian)
-
-
-    # Generate detunings
-    freq = np.linspace(200, -1500, 700)
-
-    # Simulate signal
-    signal = sim.signal(freq, params=params_sim, normalized=True)
-
-    sigma = 1.0
-    noise = np.random.normal(loc=0, scale=sigma, size=signal.shape)/(signal+1)
-    signal_err =  sigma/(signal+1)
-    signal_noise = signal + noise
-
-    spectrum = SpectralData(signal=signal_noise, 
-                            axes = Axes0D(f=freq),
-                            signal_err=signal_err)
-
-    fm = FitModel(sim)
-    df = DataFitter(spectrum, fm).fit(params_lmfit)
-    print(fit_report(df))
-    print(df.params)
-
-    # Plot results
-    fig, ax = plt.subplots(figsize=(4,2))
-    ax.set_title(f'Simulated EIT spectrum ($E = ${params["efield"]:.1f} V/cm)')
-    ax.plot(freq, signal, linewidth=1.5)
-    ax.fill_between(y1=signal, x=freq, y2=-2, color='C0', alpha=0.2)
-    ax.scatter(x=freq, y=signal_noise, 
-               marker='.', s=5,
-               color='C3', alpha=0.5)
-    # ax.plot(freq, df.best_fit, linewidth=1.5, color='C1')
-    ef =  ref.interp(params['efield'])
-    for label, amp, (fpos, _) in zip(ref.level_labels, params['rel_amp'], ef):
-        ax.axvline(x=fpos, color='C3', linestyle='--')
-    ax.set_xlabel('Detuning (MHz)')
-    ax.set_ylabel('EIT Signal $S$ (%)')
+    pass
 
 # %%

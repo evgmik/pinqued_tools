@@ -28,7 +28,6 @@ class FitModel():
 
 
 
-
 class DataFitter():
     def __init__(self, 
                  data: SpectralData,
@@ -39,10 +38,12 @@ class DataFitter():
     def set_data(self, data: SpectralData):
         self._data = data
 
-    def fit(self, params: Parameters):
+    def fit(self, params: Parameters, method: str = 'leastsq', **kwargs):
         result = minimize(self._model.residuals, 
                           params, 
+                          method=method,
                           args=(self._data.axes.f, 
                                 self._data.signal, 
-                                self._data.signal_err))
+                                self._data.signal_err),
+                          **kwargs)
         return result
