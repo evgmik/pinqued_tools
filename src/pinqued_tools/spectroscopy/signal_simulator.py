@@ -157,7 +157,8 @@ class GPPoissonSignalSimulator1D(SignalSimulator):
                            freq: NDArray, 
                            params: Parameters,
                            efield: float|NDArray|None = None,
-                           grad_vec: float|NDArray|None = None
+                           grad_vec: float|NDArray|None = None,
+                           E0: float|NDArray|None = None
                            ) -> NDArray:
         '''
         Simulate EIT signal for a given electric field using the Holtsmark lineshape.
@@ -167,10 +168,16 @@ class GPPoissonSignalSimulator1D(SignalSimulator):
             efield = params['efield'].value
         if grad_vec is None:
             grad_vec = params['grad_vec'].value
-            
+        if E0 is None:
+            if 'E0' in params:
+                E0 = params['E0'].value
+            elif 'E0_0' in params:
+                # Extract spatially varying E0 vector
+                spatial_len = len(np.atleast_1d(efield))
+                E0 = np.array([params[f'E0_{i}'].value for i in range(spatial_len)])
+
         scale_factor = params['amp'].value
         width = params['width'].value
-        E0_local = params['E0'].value
 
         # 1. Get Stark shift and sensitivity from reference
         # Note: spectral_sim.interp returns a list of (fpos, df_de) tuples
@@ -189,7 +196,7 @@ class GPPoissonSignalSimulator1D(SignalSimulator):
         for i, (hline, ai) in enumerate(zip(self._hline_list, r_amp)):
             width_smear = np.sqrt(width**2 + (np.abs(dfdE[i] * grad_vec) * self.px_size)**2)
             # Explicitly trigger 'lut' model to pass arrays effectively
-            spectrum += hline(freq, efield=efield, width=width + width_smear, E0=E0_local, amplitude=ai, model='lut')
+            spectrum += hline(freq, efield=efield, width=width + width_smear, E0=E0, amplitude=ai, model='lut')
             
         spectrum *= scale_factor
         return spectrum
