@@ -170,11 +170,7 @@ class GPPoissonSignalSimulator1D(SignalSimulator):
             
         scale_factor = params['amp'].value
         width = params['width'].value
-
-        # THE LINK: Calculate Microscopic (Holtsmark) Scale E0
-        # eps0 / e ≈ 5.5e7 (in mm^-3 units if z is mm)
-        n_i_local = 5.5e7 * np.abs(grad_vec) 
-        E0_local = 1.5e-7 * (n_i_local)**(2/3) # Example scaling constant
+        E0_local = params['E0'].value
 
         # 1. Get Stark shift and sensitivity from reference
         # Note: spectral_sim.interp returns a list of (fpos, df_de) tuples
