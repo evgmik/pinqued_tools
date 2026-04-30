@@ -76,9 +76,9 @@ class GPPoissonModel1D():
         
         # Ensure efield and grad_vec exist in params since signal_sim expects them
         if 'efield' not in params:
-            params.add('efield', value=0.0, vary=False)
+            params.add('efield', value=0.0)
         if 'grad_vec' not in params:
-            params.add('grad_vec', value=0.0, vary=False)
+            params.add('grad_vec', value=0.0)
             
         return params
 
