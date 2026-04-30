@@ -3,6 +3,8 @@ from typing import Callable
 from lmfit import minimize, Parameters
 from numpy.typing import NDArray
 
+from pinqued_tools.spectroscopy.gp_fit import GPPoissonModel1D, BSplinePoissonModel1D
+
 
 
 class FitModel():
@@ -31,7 +33,8 @@ class FitModel():
 class DataFitter():
     def __init__(self, 
                  data: SpectralData,
-                 model: FitModel|GPPoissonModel1D):
+                 model: FitModel|GPPoissonModel1D|BSplinePoissonModel1D
+                 ):
         self._data = data
         self._model = model
     
