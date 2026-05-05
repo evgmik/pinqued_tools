@@ -71,11 +71,11 @@ class SignalSimulator():
         efield = params['efield'].value
         scale_factor = params['amp'].value
         width = params['width'].value
-        E0 = params['E0'].value
+        Hfield = params['E0'].value
         r_amp = [params[f'rel_amp_{i}'].value for i in range(len(self._hline_list))]
         spectrum = np.zeros_like(freq)
         for hline, ai in zip(self._hline_list, r_amp):
-            spectrum += hline(freq, efield, width, E0, ai)
+            spectrum += hline(freq, efield, width, Hfield, ai)
         spectrum *= scale_factor
         return spectrum
 
@@ -156,27 +156,17 @@ class GPPoissonSignalSimulator1D(SignalSimulator):
     def holtsmark_spectrum(self, 
                            freq: NDArray, 
                            params: Parameters,
-                           efield: float|NDArray|None = None,
-                           grad_vec: float|NDArray|None = None,
-                           E0: float|NDArray|None = None
+                           efield: float|None = None,
+                           grad_vec: float|None = None,
+                           E0: float|None = None,
+                           amp: float|None = None
                            ) -> NDArray:
         '''
         Simulate EIT signal for a given electric field using the Holtsmark lineshape.
         Can accept spatial arrays for efield and grad_vec to vectorize the calculation.
         '''
-        if efield is None:
-            efield = params['efield'].value
-        if grad_vec is None:
-            grad_vec = params['grad_vec'].value
-        if E0 is None:
-            if 'E0' in params:
-                E0 = params['E0'].value
-            elif 'E0_0' in params:
-                # Extract spatially varying E0 vector
-                spatial_len = len(np.atleast_1d(efield))
-                E0 = np.array([params[f'E0_{i}'].value for i in range(spatial_len)])
 
-        scale_factor = params['amp'].value
+        scale_factor = params['amp'].value if amp is None else amp
         width = params['width'].value
 
         # 1. Get Stark shift and sensitivity from reference
@@ -188,18 +178,45 @@ class GPPoissonSignalSimulator1D(SignalSimulator):
         r_amp = [params[f'rel_amp_{i}'].value for i in range(len(self._hline_list))]
         
         # Handle 1D (spatial) evaluation
-        if np.ndim(efield) > 0:
+        if efield is not None and np.ndim(efield) > 0:
             spectrum = np.zeros((len(efield), len(freq)))
         else:
-            spectrum = np.zeros_like(freq)
+            spectrum = np.zeros_like(freq, dtype=np.float64)
             
         for i, (hline, ai) in enumerate(zip(self._hline_list, r_amp)):
-            width_smear = np.sqrt(width**2 + (np.abs(dfdE[i] * grad_vec) * self.px_size)**2)
-            # Explicitly trigger 'lut' model to pass arrays effectively
-            spectrum += hline(freq, efield=efield, width=width + width_smear, E0=E0, amplitude=ai, model='lut')
+            width_smear = width - np.abs(dfdE[i]) * grad_vec * self.px_size
+            # Explicitly trigger 'lut' model to pass arrays effectively.
+            # Use np.abs(efield) to prevent querying the LUT with negative fields which return 0.0
+            spectrum += hline(freq, efield=efield, width=width_smear, E0=E0, amplitude=ai, model='lut')
             
         spectrum *= scale_factor
         return spectrum
+
+    def holtsmark_spectrum_bg(self, 
+                           freq: NDArray, 
+                           params: Parameters,
+                           efield: float|NDArray|None = None,
+                           grad_vec: float|NDArray|None = None,
+                           E0: float|NDArray|None = None,
+                           b_coefs: list[float]|None = None,
+                           poly_terms: int = 2,
+                           amp: float|None = None
+                           ) -> NDArray:
+        '''
+        Simulate EIT signal for a given electric field using the Holtsmark lineshape
+        with a polynomial (tilted) background drift.
+        '''
+        signal = self.holtsmark_spectrum(freq, params, efield=efield, grad_vec=grad_vec, E0=E0, amp=amp)
+        
+        if b_coefs is not None:
+            coefs = b_coefs
+        else:
+            # Safely extract polynomial background coefficients if they exist
+            coefs = [params[f'b{i}'].value if f'b{i}' in params else 0.0 for i in range(poly_terms)]
+            
+        poly = np.poly1d(coefs)
+        
+        return signal + poly(freq)
 
 #%%
 if __name__=='__main__':
