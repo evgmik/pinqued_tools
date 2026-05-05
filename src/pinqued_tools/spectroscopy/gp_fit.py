@@ -35,7 +35,7 @@ class GPPoissonModel1D():
         # Using x as the spatial coordinate per Axes1D definition
         self.x = data.axes.x if hasattr(data.axes, 'x') else data.axes.y
         # Integrate the initial macroscopic Electric Field guess to get the potential phi
-        # Note: E_vec_init is in V/cm, x is in mm. We divide by 10 to get V/mm for integration.
+        # NOTE: E_vec_init is in V/cm, x is in mm. We divide by 10 to get V/mm for integration.
         self.phi_vec_init = -cumulative_trapezoid(E_vec_init / 10.0, self.x, initial=0.0)
         self.f = data.axes.f
         spectra = data.signal

@@ -108,7 +108,7 @@ class BaseSpectralLine(ABC):
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.interpolate import interp1d, RegularGridInterpolator
+from scipy.interpolate import interp1d, RegularGridInterpolator, CubicSpline
 
 class HoltsmarkLine(BaseSpectralLine):
     '''
@@ -122,10 +122,12 @@ class HoltsmarkLine(BaseSpectralLine):
                  n_efield_points: int = 1000):
         super().__init__(normalized)
 
-        self.stark_interp = interp1d(x=efield_reference, 
-                                     y=stark_reference, 
-                                     kind='cubic')
+        self.stark_interp = CubicSpline(efield_reference, stark_reference, extrapolate=False)
         self._efield_reference = efield_reference
+        
+        # Dense linear grid for Stark shifts
+        self._dense_efield = np.linspace(efield_reference[0], efield_reference[-1], 100000)
+        self._dense_stark = self.stark_interp(self._dense_efield)
         
         # 1. Define the integration grid for the Electric Field
         self.E_grid = np.linspace(1e-3, efield_reference[-1], n_efield_points)
@@ -136,8 +138,20 @@ class HoltsmarkLine(BaseSpectralLine):
         h_vals = np.array([self._integrate_holtsmark(b) for b in betas])
         self.H_beta_interp = interp1d(betas, h_vals, kind='cubic', bounds_error=False, fill_value=0.0)
         
+        # 2b. Dense linear grid for H(beta)
+        self._dense_betas = np.linspace(0, 20.0, 100000)
+        self._dense_h_vals = self.H_beta_interp(self._dense_betas)
+        
         # 3. Placeholder for the LUT 3D Interpolator
         self._lut_interpolator = None
+
+        # Precompute 2D grid invariants
+        self.theta_points = 20
+        self.theta_grid = np.linspace(0, np.pi, self.theta_points)
+        self.dTheta = self.theta_grid[1] - self.theta_grid[0]
+        self.Em_matrix, self.theta_matrix = np.meshgrid(self.E_grid, self.theta_grid, indexing='ij')
+        self.cos_theta = np.cos(self.theta_matrix)
+        self.sin_theta_dTheta = np.sin(self.theta_matrix) * self.dTheta
 
     def build_lut(self, 
                   freq_grid: NDArray, 
@@ -154,16 +168,31 @@ class HoltsmarkLine(BaseSpectralLine):
         library = np.zeros((len(E0_grid), len(efield_grid), len(width_grid), len(freq_grid)))
         
         # 2. Populate the grid
-        for i, E0 in enumerate(E0_grid):
+        if base_model == '2d':
             for j, efield in enumerate(efield_grid):
-                for k, width in enumerate(width_grid): 
+                E_tot = np.sqrt(efield**2 + self.Em_matrix**2 + 2 * efield * self.Em_matrix * self.cos_theta)
+                E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
+                shifts_flat = np.interp(E_tot_clear, self._dense_efield, self._dense_stark).flatten()
+                
+                for i, E0 in enumerate(E0_grid):
+                    betas = self.E_grid / E0
+                    H_vals = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals)
+                    weights_flat = (H_vals[:, np.newaxis] * self.dE * 0.5 * self.sin_theta_dTheta).flatten()
                     
-                    if base_model == '2d':
-                        spectrum = self.line2d(freq=freq_grid, efield=efield, width=width, E0=E0, amplitude=1.0)
-                    else:
-                        spectrum = self.line1d(freq=freq_grid, efield=efield, width=width, E0=E0, amplitude=1.0)
+                    for k, width in enumerate(width_grid): 
+                        library[i, j, k, :] = self._fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
+        else:
+            for j, efield in enumerate(efield_grid):
+                E_tot = efield + self.E_grid
+                E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
+                shifts_flat = np.interp(E_tot_clear, self._dense_efield, self._dense_stark)
+                
+                for i, E0 in enumerate(E0_grid):
+                    betas = self.E_grid / E0
+                    weights_flat = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals) * self.dE
                     
-                    library[i, j, k, :] = spectrum
+                    for k, width in enumerate(width_grid):
+                        library[i, j, k, :] = self._fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
                 
         # 3. Create the 4-Dimensional Interpolator
         self._lut_interpolator = RegularGridInterpolator(
@@ -252,28 +281,16 @@ class HoltsmarkLine(BaseSpectralLine):
                  amplitude: float = 1.0) -> NDArray:
         
         betas = self.E_grid / E0
-        weights = (1.0 / E0) * self.H_beta_interp(betas) * self.dE
+        weights = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals) * self.dE
         
         # Calculate Total Electric Field (Scalar Approximation)
         E_tot = efield + self.E_grid
         
         # Clip to avoid interpolation errors and get Stark shifts
-        E_tot_clear = np.clip(E_tot, self._efield_reference[0], self._efield_reference[-1])
-        shifts = self.stark_interp(E_tot_clear)
+        E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
+        shifts = np.interp(E_tot_clear, self._dense_efield, self._dense_stark)
         
-        nu_col = freq[:, np.newaxis]
-        detunings = nu_col - shifts[np.newaxis, :]
-        
-        gamma_half = width / 2.0
-        lorentzian_matrix = (gamma_half**2) / (detunings**2 + gamma_half**2)
-        
-        spectrum = np.dot(lorentzian_matrix, weights)
-        
-        area = np.trapezoid(spectrum, freq)
-        if area > 0:
-            spectrum /= area
-            
-        return amplitude * spectrum
+        return self._fast_lorentzian_sum(freq, shifts, weights, width, amplitude)
     
     def line2d(self, freq: NDArray, 
                efield: float = 0.0, 
@@ -284,26 +301,22 @@ class HoltsmarkLine(BaseSpectralLine):
         Generates the lineshape using a 2D vector summation of the external 
         DC field and the isotropic Holtsmark microfield.
         """
-        if not hasattr(self, 'theta_grid'):
-            self.theta_points = 20
-            self.theta_grid = np.linspace(0, np.pi, self.theta_points)
-            self.dTheta = self.theta_grid[1] - self.theta_grid[0]
-
         betas = self.E_grid / E0
-        H_vals = (1.0 / E0) * self.H_beta_interp(betas)
+        H_vals = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals)
 
-        Em_matrix, theta_matrix = np.meshgrid(self.E_grid, self.theta_grid, indexing='ij')
+        E_tot = np.sqrt(efield**2 + self.Em_matrix**2 + 2 * efield * self.Em_matrix * self.cos_theta)
 
-        E_tot = np.sqrt(efield**2 + Em_matrix**2 + 2 * efield * Em_matrix * np.cos(theta_matrix))
+        E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
+        shifts_2d = np.interp(E_tot_clear, self._dense_efield, self._dense_stark)
 
-        E_tot_clear = np.clip(E_tot, self._efield_reference[0], self._efield_reference[-1])
-        shifts_2d = self.stark_interp(E_tot_clear)
-
-        weights_2d = H_vals[:, np.newaxis] * self.dE * 0.5 * np.sin(theta_matrix) * self.dTheta
+        weights_2d = H_vals[:, np.newaxis] * self.dE * 0.5 * self.sin_theta_dTheta
 
         shifts_flat = shifts_2d.flatten()
         weights_flat = weights_2d.flatten()
 
+        return self._fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
+
+    def _fast_lorentzian_sum(self, freq: NDArray, shifts_flat: NDArray, weights_flat: NDArray, width: float, amplitude: float = 1.0) -> NDArray:
         nu_col = freq[:, np.newaxis]
         detunings = nu_col - shifts_flat[np.newaxis, :]
 
