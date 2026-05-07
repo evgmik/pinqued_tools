@@ -123,3 +123,17 @@ class FieldReference():
             detunings_interpolated.append((f, df_de))
 
         return detunings_interpolated
+    
+    def interp_derivative(self, efield: NDArray) -> NDArray:
+        detuning_derivatives = {}
+        for key in self._detunings.keys():
+            cs = CubicSpline(self._efield, self._detunings[key])
+            detuning_derivatives[key] = cs.derivative(1)(efield)
+        return detuning_derivatives
+    
+    def interp_values(self, efield: NDArray) -> NDArray:
+        detuning_values = {}
+        for key in self._detunings.keys():
+            cs = CubicSpline(self._efield, self._detunings[key])
+            detuning_values[key] = cs(efield)
+        return detuning_values

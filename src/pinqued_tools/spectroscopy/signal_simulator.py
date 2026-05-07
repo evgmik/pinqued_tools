@@ -184,7 +184,7 @@ class GPPoissonSignalSimulator1D(SignalSimulator):
             spectrum = np.zeros_like(freq, dtype=np.float64)
             
         for i, (hline, ai) in enumerate(zip(self._hline_list, r_amp)):
-            width_smear = width - np.abs(dfdE[i]) * grad_vec * self.px_size
+            width_smear = width + (dfdE[i] * grad_vec * self.px_size)
             # Explicitly trigger 'lut' model to pass arrays effectively.
             # Use np.abs(efield) to prevent querying the LUT with negative fields which return 0.0
             spectrum += hline(freq, efield=efield, width=width_smear, E0=E0, amplitude=ai, model='lut')

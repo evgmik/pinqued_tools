@@ -14,6 +14,11 @@ from scipy.integrate import cumulative_trapezoid
 
 import matplotlib.pyplot as plt
 
+
+
+
+
+
 class GPPoissonModel1D():
     def __init__(self, 
                  data: SpectralData,
@@ -75,10 +80,10 @@ class GPPoissonModel1D():
             
         # Enforce phi -> 0 and E -> 0 at the boundary deep in the plasma.
         if num_phi > 1:
-            params[f'phi_0'].set(value=0, vary=False)
-            params[f'phi_1'].set(value=0, vary=False)
+            params[f'phi_{num_phi - 1}'].set(value=0, vary=False)
+            params[f'phi_{num_phi - 2}'].set(value=0, vary=False)
         elif num_phi == 1:
-            params[f'phi_0'].set(value=0, vary=False)
+            params[f'phi_{num_phi - 1}'].set(value=0, vary=False)
         
         # Ensure efield and grad_vec exist in params since signal_sim expects them
         if 'efield' not in params:
@@ -170,6 +175,8 @@ class BSplinePoissonModel1D():
     
         # Using x as the spatial coordinate per Axes1D definition
         self.x = data.axes.x if hasattr(data.axes, 'x') else data.axes.y
+        if len(E_vec_init) != len(self.x):
+            raise ValueError(f"Length of E_vec_init ({len(E_vec_init)}) must match spatial axis length ({len(self.x)}).")
         # Integrate the initial macroscopic Electric Field guess to get the potential phi
         # Note: E_vec_init is in V/cm, x is in mm. We divide by 10 to get V/mm for integration.
         self.phi_vec_init = -cumulative_trapezoid(E_vec_init / 10.0, self.x, initial=0.0)
@@ -179,12 +186,14 @@ class BSplinePoissonModel1D():
         if E0_vec_init is None:
             self.E0_vec_init = np.full_like(self.x, 3.0)
         else:
+            if len(E0_vec_init) != len(self.x):
+                raise ValueError(f"Length of E0_vec_init ({len(E0_vec_init)}) must match spatial axis length ({len(self.x)}).")
             self.E0_vec_init = E0_vec_init
             
         self.n_splines = n_splines
         self.smooth_param = smooth_param
         self.smooth_param_E0 = smooth_param_E0
-        self.data_max = np.max(spectra, axis=0, keepdims=True) # Use a single global max for normalization
+        self.data_max = np.max(spectra) # Use a single global max for normalization
         self.data = spectra / self.data_max
         self.px_size = np.abs(self.x[1] - self.x[0]) # Pixel size
         
@@ -236,12 +245,21 @@ class BSplinePoissonModel1D():
         # Add spatially varying background parameters (independent for each spatial pixel)
         for i in range(len(self.x)):
             if f'b0_{i}' not in params:
-                params.add(f'b0_{i}', value=0.0) # Slope
+                params.add(f'b0_{i}', value=1e-4) # Slope
             if f'b1_{i}' not in params:
-                params.add(f'b1_{i}', value=0.0) # Offset
+                params.add(f'b1_{i}', value=1e-4) # Offset
             if f'amp_{i}' not in params:
                 init_amp = params['amp'].value if 'amp' in params else 100.0
                 params.add(f'amp_{i}', value=init_amp, min=0.0) # Amplitude
+        # Model background and amplitude using B-splines to drastically reduce parameter count
+        init_amp = params['amp'].value if 'amp' in params else 100.0
+        for i in range(self.n_splines):
+            if f'c_b0_{i}' not in params:
+                params.add(f'c_b0_{i}', value=1e-4)
+            if f'c_b1_{i}' not in params:
+                params.add(f'c_b1_{i}', value=1e-4)
+            if f'c_amp_{i}' not in params:
+                params.add(f'c_amp_{i}', value=init_amp, min=0.0)
 
         c_init = self.c_init.copy()
         c_E0_init = self.c_E0_init.copy()
@@ -251,20 +269,34 @@ class BSplinePoissonModel1D():
             phi_slope = -5.0 * np.abs(self.x - self.x[0])
             c_init = self.B_plus @ phi_slope
 
+        # Enforce monotonically decreasing potential phi(x) by constraining B-spline 
+        # coefficients. This strictly guarantees Electric Field >= 0 everywhere.
+        params.add(f'c_{self.n_splines - 1}', value=0.0, vary=False)
+        for i in range(self.n_splines - 2, -1, -1):
+            delta_init = max(0.0, c_init[i] - c_init[i+1])
+            params.add(f'delta_c_{i}', value=delta_init, min=0.0)
+            params.add(f'c_{i}', expr=f'c_{i+1} + delta_c_{i}')
+            
+        # Constrain E0 to a physical ceiling
         for i in range(self.n_splines):
             params.add(f'c_{i}', value=c_init[i])
             # Constrain E0 to a physical ceiling to prevent it from growing
             # arbitrarily large and mimicking macroscopic Stark splitting.
-            params.add(f'c_E0_{i}', value=c_E0_init[i], min=1e-3, max=3.0)
+            params.add(f'c_E0_{i}', value=c_E0_init[i], min=1e-3, max=25.0, vary=False)
             
         # Enforce phi -> 0 and E -> 0 at the boundary deep in the plasma.
         # c_0 controls the boundary potential, and c_1 (relative to c_0) controls 
         # the boundary derivative. Locking both to 0 guarantees E = 0.
+        # Enforce E -> 0 at the boundary deep in the plasma.
         if self.n_splines > 1:
-            params[f'c_0'].set(value=0, vary=False)
-            params[f'c_1'].set(value=0, vary=False)
+            params[f'c_{self.n_splines - 1}'].set(value=0, vary=False)
+            params[f'c_{self.n_splines - 2}'].set(value=0, vary=False)
         elif self.n_splines == 1:
-            params[f'c_0'].set(value=0, vary=False)
+            params[f'c_{self.n_splines - 1}'].set(value=0, vary=False)
+            params[f'delta_c_{self.n_splines - 2}'].set(value=0.0, vary=False)
+        
+        if 'fshift' not in params:
+            params.add('fshift', value=0.0)
         
         return params
 
@@ -291,11 +323,22 @@ class BSplinePoissonModel1D():
         b0_vec = np.array([params[f'b0_{i}'].value for i in range(len(self.x))])
         b1_vec = np.array([params[f'b1_{i}'].value for i in range(len(self.x))])
         amp_vec = np.array([params[f'amp_{i}'].value for i in range(len(self.x))])
+        # Construct spatially varying background coefficients from splines
+        c_b0 = np.array([params[f'c_b0_{i}'].value for i in range(self.n_splines)])
+        c_b1 = np.array([params[f'c_b1_{i}'].value for i in range(self.n_splines)])
+        c_amp = np.array([params[f'c_amp_{i}'].value for i in range(self.n_splines)])
         
+        b0_vec = BSpline(self.knots, c_b0, self.k, extrapolate=False)(self.x)
+        b1_vec = BSpline(self.knots, c_b1, self.k, extrapolate=False)(self.x)
+        amp_vec = BSpline(self.knots, c_amp, self.k, extrapolate=False)(self.x)
+        
+        fshift = params['fshift'].value if 'fshift' in params else 0.0
+        f_shifted = self.f - fshift
+
         # 2D Spectrum Evaluation
         S_pred = np.zeros((len(self.x), len(self.f)))
         for i in range(len(self.x)):
-            S_pred[i,:] = self.signal_sim.holtsmark_spectrum_bg(self.f, params, 
+            S_pred[i,:] = self.signal_sim.holtsmark_spectrum_bg(f_shifted, params, 
                                                     efield=E_vec[i], grad_vec=grad_vec[i], E0=E0_vec[i],
                                                     b_coefs=[b0_vec[i], b1_vec[i]],
                                                     amp=amp_vec[i])
@@ -314,6 +357,12 @@ class BSplinePoissonModel1D():
                   ) -> NDArray:
         S_pred, E_vec, _, phi_vec, E0_vec = self.forward_physics(params)
 
+        if data.shape != S_pred.shape:
+            raise ValueError(f"Data shape mismatch! The fitter provided data of shape {data.shape}, "
+                             f"but the model evaluated a grid of shape {S_pred.shape}. "
+                             "Ensure the DataFitter is initialized with the exact same SpectralData "
+                             "object that was used to initialize the model.")
+
         # Normalize data identically to internal logic
         data_norm = data / self.data_max
         difference = data_norm - S_pred
@@ -327,15 +376,23 @@ class BSplinePoissonModel1D():
         # Include P-spline smoothness penalty as "prior residuals"
         c = np.array([params[f'c_{i}'].value for i in range(self.n_splines)])
         c_E0 = np.array([params[f'c_E0_{i}'].value for i in range(self.n_splines)])
+        c_b0 = np.array([params[f'c_b0_{i}'].value for i in range(self.n_splines)])
+        c_b1 = np.array([params[f'c_b1_{i}'].value for i in range(self.n_splines)])
+        c_amp = np.array([params[f'c_amp_{i}'].value for i in range(self.n_splines)])
         
         prior_res = np.sqrt(self.smooth_param) * (self.D @ c)
         prior_res_E0 = np.sqrt(self.smooth_param_E0) * (self.D @ c_E0)
+        # Small regularizing smoothing penalties for the background to keep it well-behaved
+        prior_res_b0 = np.sqrt(self.smooth_param * 0.1) * (self.D @ c_b0)
+        prior_res_b1 = np.sqrt(self.smooth_param * 0.1) * (self.D @ c_b1)
+        prior_res_amp = np.sqrt(self.smooth_param * 0.1) * (self.D @ c_amp)
         
         # Soft penalty to bound E-field without zeroing LM gradients
-        max_E = np.max(self.field_ref.efield)
-        overshoot = np.clip(E_vec - max_E, 0, None)
-        undershoot = np.clip(-E_vec, 0, None)
+        # max_E = np.max(self.field_ref.efield)
+        # overshoot = np.clip(E_vec - max_E, 0, None)
+        # undershoot = np.clip(-E_vec, 0, None)
         # Smooth quadratic penalty to prevent infinite Jacobian walls that break the optimizer
-        bounds_penalty = 1e4 * (overshoot**2 + undershoot**2)
+        # bounds_penalty = 1e4 * (overshoot**2 + undershoot**2)
         
-        return np.concatenate([data_res, prior_res, prior_res_E0, bounds_penalty])
+        return np.concatenate([data_res, prior_res, prior_res_E0])#, bounds_penalty])
+        return np.concatenate([data_res, prior_res, prior_res_E0, prior_res_b0, prior_res_b1, prior_res_amp])#, bounds_penalty])
