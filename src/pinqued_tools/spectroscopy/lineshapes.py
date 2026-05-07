@@ -18,7 +18,7 @@ def gaussian(freq: NDArray,
     Gaussian lineshape
     '''
     sigma = width / np.sqrt(8*np.log(2))
-    norm = 1.0 / np.sqrt(2 * np.pi * sigma)
+    norm = 1.0 / (sigma * np.sqrt(2 * np.pi))
     shape = np.exp( - 0.5 * ((freq - fpos) / sigma)**2)
     if normalized:
         return amplitude * norm * shape
@@ -33,7 +33,7 @@ def lorentzian(freq: NDArray,
     '''
     Lorentzian lineshape
     '''
-    norm = 2.0 * width / np.pi 
+    norm = 2.0 / (np.pi * width)
     shape = 1.0 / (1.0 + (2.0 * (freq - fpos) / width)**2)
     if normalized:
         return amplitude * norm * shape
@@ -225,7 +225,6 @@ class HoltsmarkLine(BaseSpectralLine):
         E0 = np.clip(E0, grid_E0[0], grid_E0[-1])
         efield = np.clip(efield, grid_E[0], grid_E[-1])
         width = np.clip(width, grid_W[0], grid_W[-1])
-        freq = np.clip(freq, grid_f[0], grid_f[-1])
 
         # Scalar parameters: return 1D frequency spectrum
         if efield.ndim == 0 and width.ndim == 0 and E0.ndim == 0:
@@ -325,9 +324,11 @@ class HoltsmarkLine(BaseSpectralLine):
 
         spectrum = np.dot(lorentzian_matrix, weights_flat)
 
-        area = np.trapezoid(spectrum, freq)
-        if area > 0:
-            spectrum /= area
+        # Analytical normalization over all space to prevent artificial 
+        # amplitude explosion when a peak shifts outside the frequency window
+        total_area = np.pi * gamma_half * np.sum(weights_flat)
+        if total_area > 0:
+            spectrum /= total_area
 
         return amplitude * spectrum
     

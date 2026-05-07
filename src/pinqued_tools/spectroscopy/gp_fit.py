@@ -25,7 +25,8 @@ class GPPoissonModel1D():
                  field_ref: FieldReference,
                  signal_sim: GPPoissonSignalSimulator1D,
                  E_vec_init: NDArray,
-                 l=1.0, sigma_f=50.0
+                 l=1.0, sigma_f=50.0,
+                 zero_bnd_efield: bool = True
                  ):
         """
         z: spatial coordinates (mm)
@@ -57,6 +58,7 @@ class GPPoissonModel1D():
         # Cholesky decomposition of K_inv to formulate the GP prior as sum of squares
         # (L_inv @ phi).T @ (L_inv @ phi) = phi.T @ K_inv @ phi
         self.L_inv = cholesky(self.K_inv, lower=False)
+        self.zero_bnd_efield = zero_bnd_efield
 
     def _matern_kernel(self, x1, x2, l, sigma_f):
         d = np.abs(x1[:, None] - x2[None, :])
@@ -81,7 +83,8 @@ class GPPoissonModel1D():
         # Enforce phi -> 0 and E -> 0 at the boundary deep in the plasma.
         if num_phi > 1:
             params[f'phi_{num_phi - 1}'].set(value=0, vary=False)
-            params[f'phi_{num_phi - 2}'].set(value=0, vary=False)
+            if self.zero_bnd_efield:
+                params[f'phi_{num_phi - 2}'].set(value=0, vary=False)
         elif num_phi == 1:
             params[f'phi_{num_phi - 1}'].set(value=0, vary=False)
         
@@ -155,7 +158,8 @@ class BSplinePoissonModel1D():
                  n_splines: int = 25, # Dimension of spline basis
                  spline_degree: int = 3,
                  smooth_param: float = 1e4, # Smoothing parameter for E-field spline
-                 smooth_param_E0: float = 1e4 # Smoothing parameter for Holtsmark field spline
+                 smooth_param_E0: float = 1e4, # Smoothing parameter for Holtsmark field spline
+                 zero_bnd_efield: bool = True # If True, forces E-field to exactly 0 at the boundary
                  ):
         """
         Models the potential phi(x) using penalized B-splines (P-splines).
@@ -193,6 +197,7 @@ class BSplinePoissonModel1D():
         self.n_splines = n_splines
         self.smooth_param = smooth_param
         self.smooth_param_E0 = smooth_param_E0
+        self.zero_bnd_efield = zero_bnd_efield
         self.data_max = np.max(spectra) # Use a single global max for normalization
         self.data = spectra / self.data_max
         self.px_size = np.abs(self.x[1] - self.x[0]) # Pixel size
@@ -242,15 +247,6 @@ class BSplinePoissonModel1D():
         """
         params = base_params.copy()
         
-        # Add spatially varying background parameters (independent for each spatial pixel)
-        for i in range(len(self.x)):
-            if f'b0_{i}' not in params:
-                params.add(f'b0_{i}', value=1e-4) # Slope
-            if f'b1_{i}' not in params:
-                params.add(f'b1_{i}', value=1e-4) # Offset
-            if f'amp_{i}' not in params:
-                init_amp = params['amp'].value if 'amp' in params else 100.0
-                params.add(f'amp_{i}', value=init_amp, min=0.0) # Amplitude
         # Model background and amplitude using B-splines to drastically reduce parameter count
         init_amp = params['amp'].value if 'amp' in params else 100.0
         for i in range(self.n_splines):
@@ -279,20 +275,10 @@ class BSplinePoissonModel1D():
             
         # Constrain E0 to a physical ceiling
         for i in range(self.n_splines):
-            params.add(f'c_{i}', value=c_init[i])
-            # Constrain E0 to a physical ceiling to prevent it from growing
-            # arbitrarily large and mimicking macroscopic Stark splitting.
             params.add(f'c_E0_{i}', value=c_E0_init[i], min=1e-3, max=25.0, vary=False)
             
-        # Enforce phi -> 0 and E -> 0 at the boundary deep in the plasma.
-        # c_0 controls the boundary potential, and c_1 (relative to c_0) controls 
-        # the boundary derivative. Locking both to 0 guarantees E = 0.
         # Enforce E -> 0 at the boundary deep in the plasma.
-        if self.n_splines > 1:
-            params[f'c_{self.n_splines - 1}'].set(value=0, vary=False)
-            params[f'c_{self.n_splines - 2}'].set(value=0, vary=False)
-        elif self.n_splines == 1:
-            params[f'c_{self.n_splines - 1}'].set(value=0, vary=False)
+        if self.n_splines > 1 and self.zero_bnd_efield:
             params[f'delta_c_{self.n_splines - 2}'].set(value=0.0, vary=False)
         
         if 'fshift' not in params:
@@ -319,10 +305,6 @@ class BSplinePoissonModel1D():
         # grad = dE/dx = -d2_phi/dx2 (2nd derivative, nu=2) in (V/cm) / mm
         grad_vec = -spl(self.x, nu=2) * 10.0
         
-        # Extract spatially varying background coefficients
-        b0_vec = np.array([params[f'b0_{i}'].value for i in range(len(self.x))])
-        b1_vec = np.array([params[f'b1_{i}'].value for i in range(len(self.x))])
-        amp_vec = np.array([params[f'amp_{i}'].value for i in range(len(self.x))])
         # Construct spatially varying background coefficients from splines
         c_b0 = np.array([params[f'c_b0_{i}'].value for i in range(self.n_splines)])
         c_b1 = np.array([params[f'c_b1_{i}'].value for i in range(self.n_splines)])
@@ -342,6 +324,10 @@ class BSplinePoissonModel1D():
                                                     efield=E_vec[i], grad_vec=grad_vec[i], E0=E0_vec[i],
                                                     b_coefs=[b0_vec[i], b1_vec[i]],
                                                     amp=amp_vec[i])
+        S_pred = self.signal_sim.holtsmark_spectrum(
+            f_shifted, params, efield=E_vec, grad_vec=grad_vec, E0=E0_vec, amp=1.0)
+        S_pred *= amp_vec[:, np.newaxis]
+        S_pred += (b0_vec[:, np.newaxis] * f_shifted[np.newaxis, :] + b1_vec[:, np.newaxis])
 
         # Ensure predicted spectrum orientation matches experimental data
         if S_pred.shape != self.data.shape and S_pred.T.shape == self.data.shape:
@@ -394,5 +380,4 @@ class BSplinePoissonModel1D():
         # Smooth quadratic penalty to prevent infinite Jacobian walls that break the optimizer
         # bounds_penalty = 1e4 * (overshoot**2 + undershoot**2)
         
-        return np.concatenate([data_res, prior_res, prior_res_E0])#, bounds_penalty])
         return np.concatenate([data_res, prior_res, prior_res_E0, prior_res_b0, prior_res_b1, prior_res_amp])#, bounds_penalty])
