@@ -318,12 +318,6 @@ class BSplinePoissonModel1D():
         f_shifted = self.f - fshift
 
         # 2D Spectrum Evaluation
-        S_pred = np.zeros((len(self.x), len(self.f)))
-        for i in range(len(self.x)):
-            S_pred[i,:] = self.signal_sim.holtsmark_spectrum_bg(f_shifted, params, 
-                                                    efield=E_vec[i], grad_vec=grad_vec[i], E0=E0_vec[i],
-                                                    b_coefs=[b0_vec[i], b1_vec[i]],
-                                                    amp=amp_vec[i])
         S_pred = self.signal_sim.holtsmark_spectrum(
             f_shifted, params, efield=E_vec, grad_vec=grad_vec, E0=E0_vec, amp=1.0)
         S_pred *= amp_vec[:, np.newaxis]
