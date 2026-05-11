@@ -36,6 +36,12 @@ class SignalSimulator():
             self._hline_list = self._holtsmark_spectrum_prepare()
             print(len(self._hline_list))
 
+    @property
+    def hline_list(self):
+        if self._hline_list is None:
+            print(f'Holtsmark lines not prepared.') 
+        return self._hline_list
+
     def _holtsmark_spectrum_prepare(self) -> list[HoltsmarkLine]:
         '''
         Simulate EIT signal for a given electric field using the Holtsmark lineshape.

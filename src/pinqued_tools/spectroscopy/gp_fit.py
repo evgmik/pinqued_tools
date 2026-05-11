@@ -231,7 +231,6 @@ class BSplinePoissonModel1D():
         # A 3rd-order difference penalizes the 2nd derivative of the E-field,
         # allowing the optimizer to form physically realistic linear E-fields (sheaths)
         # with ZERO penalty, eliminating the artificial "curved up" parabola effect. 
-        # NOTE: (DID NOT WORK)
         if self.n_splines >= 4:
             self.D = diags([-1.0, 3.0, -3.0, 1.0], [0, 1, 2, 3], shape=(self.n_splines - 3, self.n_splines)).toarray()
         elif self.n_splines >= 3:
@@ -275,11 +274,11 @@ class BSplinePoissonModel1D():
             
         # Constrain E0 to a physical ceiling
         for i in range(self.n_splines):
-            params.add(f'c_E0_{i}', value=c_E0_init[i], min=1e-3, max=25.0, vary=False)
+            params.add(f'c_E0_{i}', value=c_E0_init[i], min=1e-3, max=25.0, vary=True)
             
         # Enforce E -> 0 at the boundary deep in the plasma.
         if self.n_splines > 1 and self.zero_bnd_efield:
-            params[f'delta_c_{self.n_splines - 2}'].set(value=0.0, vary=False)
+            params[f'delta_c_{self.n_splines - 2}'].set(value=0.0, vary=True)
         
         if 'fshift' not in params:
             params.add('fshift', value=0.0)
