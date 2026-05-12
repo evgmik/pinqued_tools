@@ -15,6 +15,55 @@ pip install git+https://github.com/mikevorobiov/pinqued_tools/
 
 
 # Changelog
+## v0.0.12 - (2026-05-12)
+#### Added
+- Numba-enhanced spline model for significantly faster performance.
+#### Changed
+- Replaced semi-custom polynomial interpolation in favor of standard splines.
+- Optimized Holtsmark LUT calculation with Numba.
+- Removed the `E->0` boundary enforcement constraint.
+
+## v0.0.11 - (2026-04-30)
+#### Added
+- Working global fit and P-spline fit capabilities.
+#### Changed
+- Improved generation speed for the Holtsmark lineshape LUT.
+- `E0` parameter is now spatially varying and treated independently.
+
+## v0.0.10 - (2026-04-30)
+#### Fixed
+- Removed incorrect expression that incorrectly tied `E0` to ion density.
+
+## v0.0.9 - (2026-04-30)
+#### Added
+- Implemented `GaussianProcesses` fit and Penalized B-splines fit models.
+
+## v0.0.8 - (2026-04-29)
+#### Fixed
+- Resolved a bug preventing the E-field and its spatial gradient from varying.
+
+## v0.0.7 - (2026-04-29)
+#### Fixed
+- Minor bug fixes.
+
+## v0.0.6 - (2026-04-29)
+#### Added
+- Implemented Gaussian Process global fitting algorithm.
+
+## v0.0.5 - (2026-04-29)
+#### Added
+- Implemented proper Holtsmark broadened EIT spectral model alongside LUT generation.
+- Added a dedicated calibration class.
+- Added methods to calculate relative EIT intensities using simple excitation path summation.
+#### Changed
+- Updated NumPy requirement by removing the `<1` constraint.
+- Migrated away from deprecated `numpy.trapz()` in favor of `numpy.trapezoid()`.
+- Introduced `pybaselines` as a package dependency.
+- Switched to manual package version management.
+- The `interp` method now encapsulates both polynomial piecewise and global spline interpolations.
+#### Deprecated
+- The `RydbergStarkEIT` class is now officially deprecated.
+
 ## v0.0.4 - (2026-04-09)
 #### Added
 - `DataManager` now supports saving `matplotlib` figures and any object with a `.save()` method.
