@@ -49,6 +49,11 @@ class FieldReference():
             self._detunings[key] = original_detuning
             self._detunings_interpolation_domain[key] = detuning_interpolation_domain
             
+        # Precompute splines to speed up interpolation
+        self._splines = {}
+        for key, val in self._detunings_interpolation_domain.items():
+            self._splines[key] = CubicSpline(self._efield_interpolation_domain, val)
+
     @property
     def efield(self) -> NDArray:
         return self._efield
@@ -61,52 +66,12 @@ class FieldReference():
     def level_labels(self) -> list[str]:
         return list(self._detunings.keys())
     
-    def interp(self, efield: float, method='spline') -> list[tuple[float, float]]:
+    def interp(self, efield: float) -> list[tuple[float, float]]:
         '''
         Interpolates between points of the reference for a given E-field.
         Calculates 1st derivative of the reference f(E) dependence.
         '''
-        if method == 'poly':
-            return self.interp_poly(efield)
-        elif method == 'spline':
-            return self.interp_spline(efield)
-        else:
-            raise ValueError("Invalid interpolation method. Choose 'poly' or 'spline'.")
-
-    def interp_poly(self, efield: float) -> list[tuple[float, float]]:
-        '''
-        Interpolates between points of the reference for a given E-field.
-        Calculates 1st derivative of the reference f(E) dependence.
-        '''
-        efield_reference = self._efield_interpolation_domain
-        detunings_reference = self._detunings_interpolation_domain
-        
-
-        # 3. Extract a portion of the reference that is closest to the E-field
-        #    value `efield` 
-        closest_field = np.isclose(efield, efield_reference, atol=self._atol)
-        idx_tmp = np.where(closest_field)
-        closest_field_idx = np.min(idx_tmp)
-        lower_lim_field = closest_field_idx - self._n_interp
-        upper_lim_field = closest_field_idx + self._n_interp + 1
-
-        x = efield_reference[lower_lim_field:upper_lim_field]
-
-        detunings_interpolated = []
-        for value in detunings_reference.values():
-            y = value[lower_lim_field :upper_lim_field]
-
-        # 4. Interpolate reference values in-between the known values
-        #    using a second degree polynomial and define a polynomial object
-            poly_coefs = np.polyfit(x, y, 2)
-            polynomial = np.poly1d(poly_coefs)
-
-        # 5. Calculate peak position with its 1st and 2nd derivatives wrt E-field
-            f = polynomial(efield) # freq. position at `efield`
-            df_de = polynomial.deriv(1)(efield) # first derivative
-            detunings_interpolated.append((f, df_de))
-
-        return detunings_interpolated
+        return self.interp_spline(efield)
 
     def interp_spline(self, efield: float) -> list[tuple[float, float]]:
         '''
@@ -116,24 +81,22 @@ class FieldReference():
         detunings_reference = self._detunings_interpolation_domain
 
         detunings_interpolated = []
-        for value in detunings_reference.values():
-            cs = CubicSpline(efield_reference, value)
+        for key in detunings_reference.keys():
+            cs = self._splines[key]
             f = cs(efield) # freq. position at `efield`
-            df_de = cs.derivative(1)(efield) # first derivative
+            df_de = cs(efield, nu=1) # first derivative (faster than .derivative(1)())
             detunings_interpolated.append((f, df_de))
 
         return detunings_interpolated
     
-    def interp_derivative(self, efield: NDArray) -> NDArray:
+    def interp_dfdE(self, efield: NDArray) -> Dict[str, NDArray]:
         detuning_derivatives = {}
         for key in self._detunings.keys():
-            cs = CubicSpline(self._efield, self._detunings[key])
-            detuning_derivatives[key] = cs.derivative(1)(efield)
+            detuning_derivatives[key] = self._splines[key](efield, nu=1)
         return detuning_derivatives
     
-    def interp_values(self, efield: NDArray) -> NDArray:
+    def interp_f(self, efield: NDArray) -> Dict[str, NDArray]:
         detuning_values = {}
         for key in self._detunings.keys():
-            cs = CubicSpline(self._efield, self._detunings[key])
-            detuning_values[key] = cs(efield)
+            detuning_values[key] = self._splines[key](efield)
         return detuning_values
