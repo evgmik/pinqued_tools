@@ -109,6 +109,31 @@ class BaseSpectralLine(ABC):
 import numpy as np
 from numpy.typing import NDArray
 from scipy.interpolate import interp1d, RegularGridInterpolator, CubicSpline
+from numba import njit, prange
+
+@njit(parallel=True, fastmath=True)
+def _fast_lorentzian_sum(freq: NDArray, 
+                         shifts_flat: NDArray, 
+                         weights_flat: NDArray, 
+                         width: float, 
+                         amplitude: float = 1.0) -> NDArray:
+    spectrum = np.zeros(freq.shape[0], dtype=np.float64)
+    gamma_half = width / 2.0
+    gamma_half_sq = gamma_half**2
+    
+    for i in prange(freq.shape[0]):
+        val = 0.0
+        f = freq[i]
+        for j in range(shifts_flat.shape[0]):
+            detuning = f - shifts_flat[j]
+            val += weights_flat[j] * gamma_half_sq / (detuning**2 + gamma_half_sq)
+        spectrum[i] = val
+        
+    total_area = np.pi * gamma_half * np.sum(weights_flat)
+    if total_area > 0:
+        return amplitude * spectrum / total_area
+        
+    return amplitude * spectrum
 
 class HoltsmarkLine(BaseSpectralLine):
     '''
@@ -180,7 +205,7 @@ class HoltsmarkLine(BaseSpectralLine):
                     weights_flat = (H_vals[:, np.newaxis] * self.dE * 0.5 * self.sin_theta_dTheta).flatten()
                     
                     for k, width in enumerate(width_grid): 
-                        library[i, j, k, :] = self._fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
+                        library[i, j, k, :] = _fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
         else:
             for j, efield in enumerate(efield_grid):
                 E_tot = efield + self.E_grid
@@ -192,7 +217,7 @@ class HoltsmarkLine(BaseSpectralLine):
                     weights_flat = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals) * self.dE
                     
                     for k, width in enumerate(width_grid):
-                        library[i, j, k, :] = self._fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
+                        library[i, j, k, :] = _fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
                 
         # 3. Create the 4-Dimensional Interpolator
         self._lut_interpolator = RegularGridInterpolator(
@@ -289,7 +314,7 @@ class HoltsmarkLine(BaseSpectralLine):
         E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
         shifts = np.interp(E_tot_clear, self._dense_efield, self._dense_stark)
         
-        return self._fast_lorentzian_sum(freq, shifts, weights, width, amplitude)
+        return _fast_lorentzian_sum(freq, shifts, weights, width, amplitude)
     
     def line2d(self, freq: NDArray, 
                efield: float = 0.0, 
@@ -313,24 +338,7 @@ class HoltsmarkLine(BaseSpectralLine):
         shifts_flat = shifts_2d.flatten()
         weights_flat = weights_2d.flatten()
 
-        return self._fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
-
-    def _fast_lorentzian_sum(self, freq: NDArray, shifts_flat: NDArray, weights_flat: NDArray, width: float, amplitude: float = 1.0) -> NDArray:
-        nu_col = freq[:, np.newaxis]
-        detunings = nu_col - shifts_flat[np.newaxis, :]
-
-        gamma_half = width / 2.0
-        lorentzian_matrix = (gamma_half**2) / (detunings**2 + gamma_half**2)
-
-        spectrum = np.dot(lorentzian_matrix, weights_flat)
-
-        # Analytical normalization over all space to prevent artificial 
-        # amplitude explosion when a peak shifts outside the frequency window
-        total_area = np.pi * gamma_half * np.sum(weights_flat)
-        if total_area > 0:
-            spectrum /= total_area
-
-        return amplitude * spectrum
+        return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
     
     def _integrate_holtsmark(self, beta):
         """Rigorous Holtsmark integral definition."""
