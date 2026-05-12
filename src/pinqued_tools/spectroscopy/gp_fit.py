@@ -11,6 +11,7 @@ from scipy.linalg import cholesky
 from scipy.interpolate import BSpline
 from scipy.sparse import diags
 from scipy.integrate import cumulative_trapezoid
+from numba import njit, prange
 
 import matplotlib.pyplot as plt
 
@@ -213,17 +214,22 @@ class BSplinePoissonModel1D():
         internal_knots = np.linspace(self.x[0], self.x[-1], n_internal_knots + 2)[1:-1]
         self.knots = np.concatenate(([self.x[0]] * (self.k + 1), internal_knots, [self.x[-1]] * (self.k + 1)))
 
-        # Construct the B-spline basis matrix B, where phi = B @ c
-        B = np.zeros((len(self.x), n_splines))
+        # Precompute the B-spline basis matrices for instant evaluation via dot product
+        self.B = np.zeros((len(self.x), n_splines))
+        self.B_d1 = np.zeros((len(self.x), n_splines))
+        self.B_d2 = np.zeros((len(self.x), n_splines))
+        
         for i in range(n_splines):
             c = np.zeros(n_splines)
             c[i] = 1
             # BSpline is defined by knots, coefficients, and degree.
             spl = BSpline(self.knots, c, self.k, extrapolate=False)
-            B[:, i] = spl(self.x)
+            self.B[:, i] = spl(self.x)
+            self.B_d1[:, i] = spl(self.x, nu=1)
+            self.B_d2[:, i] = spl(self.x, nu=2)
         
         # Get pseudo-inverse to map from potential phi to spline coefficients c
-        self.B_plus = np.linalg.pinv(B)
+        self.B_plus = np.linalg.pinv(self.B)
         self.c_init = self.B_plus @ self.phi_vec_init
         self.c_E0_init = self.B_plus @ self.E0_vec_init
         
@@ -285,33 +291,26 @@ class BSplinePoissonModel1D():
         
         return params
 
-    def forward_physics(self, params):
+    def forward_physics(self, params, coeffs=None):
         """Maps Potential -> Field -> Smeared Spectra."""
-        # Reconstruct B-spline coefficients c from the lmfit parameters
-        c = np.array([params[f'c_{i}'].value for i in range(self.n_splines)])
-        c_E0 = np.array([params[f'c_E0_{i}'].value for i in range(self.n_splines)])
-        
-        # Construct continuous B-spline representation
-        spl = BSpline(self.knots, c, self.k, extrapolate=False)
-        spl_E0 = BSpline(self.knots, c_E0, self.k, extrapolate=False)
-        
-        # Evaluate potential and exact analytical derivatives from the B-spline
-        phi_vec = spl(self.x)
-        E0_vec = spl_E0(self.x)
-        # E = -d_phi/dx (1st derivative, nu=1). 
-        # Spatial axis `x` is in mm, so multiply by 10.0 to get V/cm.
-        E_vec = -spl(self.x, nu=1) * 10.0
-        # grad = dE/dx = -d2_phi/dx2 (2nd derivative, nu=2) in (V/cm) / mm
-        grad_vec = -spl(self.x, nu=2) * 10.0
-        
-        # Construct spatially varying background coefficients from splines
-        c_b0 = np.array([params[f'c_b0_{i}'].value for i in range(self.n_splines)])
-        c_b1 = np.array([params[f'c_b1_{i}'].value for i in range(self.n_splines)])
-        c_amp = np.array([params[f'c_amp_{i}'].value for i in range(self.n_splines)])
-        
-        b0_vec = BSpline(self.knots, c_b0, self.k, extrapolate=False)(self.x)
-        b1_vec = BSpline(self.knots, c_b1, self.k, extrapolate=False)(self.x)
-        amp_vec = BSpline(self.knots, c_amp, self.k, extrapolate=False)(self.x)
+        if coeffs is None:
+            # Reconstruct B-spline coefficients c from the lmfit parameters
+            c = np.array([params[f'c_{i}'].value for i in range(self.n_splines)])
+            c_E0 = np.array([params[f'c_E0_{i}'].value for i in range(self.n_splines)])
+            c_b0 = np.array([params[f'c_b0_{i}'].value for i in range(self.n_splines)])
+            c_b1 = np.array([params[f'c_b1_{i}'].value for i in range(self.n_splines)])
+            c_amp = np.array([params[f'c_amp_{i}'].value for i in range(self.n_splines)])
+        else:
+            c, c_E0, c_b0, c_b1, c_amp = coeffs
+
+        # Fast evaluation using precomputed basis matrices (BLAS matrix multiplication)
+        phi_vec = self.B @ c
+        E0_vec = self.B @ c_E0
+        E_vec = -(self.B_d1 @ c) * 10.0
+        grad_vec = -(self.B_d2 @ c) * 10.0
+        b0_vec = self.B @ c_b0
+        b1_vec = self.B @ c_b1
+        amp_vec = self.B @ c_amp
         
         fshift = params['fshift'].value if 'fshift' in params else 0.0
         f_shifted = self.f - fshift
@@ -334,7 +333,16 @@ class BSplinePoissonModel1D():
                   data: NDArray, 
                   data_err: NDArray|None = None
                   ) -> NDArray:
-        S_pred, E_vec, _, phi_vec, E0_vec = self.forward_physics(params)
+        
+        # Extract parameters once to avoid duplicate loops
+        c = np.array([params[f'c_{i}'].value for i in range(self.n_splines)])
+        c_E0 = np.array([params[f'c_E0_{i}'].value for i in range(self.n_splines)])
+        c_b0 = np.array([params[f'c_b0_{i}'].value for i in range(self.n_splines)])
+        c_b1 = np.array([params[f'c_b1_{i}'].value for i in range(self.n_splines)])
+        c_amp = np.array([params[f'c_amp_{i}'].value for i in range(self.n_splines)])
+        
+        coeffs = (c, c_E0, c_b0, c_b1, c_amp)
+        S_pred, E_vec, _, phi_vec, E0_vec = self.forward_physics(params, coeffs=coeffs)
 
         if data.shape != S_pred.shape:
             raise ValueError(f"Data shape mismatch! The fitter provided data of shape {data.shape}, "
@@ -353,12 +361,6 @@ class BSplinePoissonModel1D():
             data_res = (difference / data_err_norm).flatten()
             
         # Include P-spline smoothness penalty as "prior residuals"
-        c = np.array([params[f'c_{i}'].value for i in range(self.n_splines)])
-        c_E0 = np.array([params[f'c_E0_{i}'].value for i in range(self.n_splines)])
-        c_b0 = np.array([params[f'c_b0_{i}'].value for i in range(self.n_splines)])
-        c_b1 = np.array([params[f'c_b1_{i}'].value for i in range(self.n_splines)])
-        c_amp = np.array([params[f'c_amp_{i}'].value for i in range(self.n_splines)])
-        
         prior_res = np.sqrt(self.smooth_param) * (self.D @ c)
         prior_res_E0 = np.sqrt(self.smooth_param_E0) * (self.D @ c_E0)
         # Small regularizing smoothing penalties for the background to keep it well-behaved
@@ -374,3 +376,103 @@ class BSplinePoissonModel1D():
         # bounds_penalty = 1e4 * (overshoot**2 + undershoot**2)
         
         return np.concatenate([data_res, prior_res, prior_res_E0, prior_res_b0, prior_res_b1, prior_res_amp])#, bounds_penalty])
+
+
+# ------------------- NUMBA ACCELERATED MODEL -------------------
+
+@njit(fastmath=True, cache=True)
+def _bspline_eval_vectors_numba(c, c_E0, c_b0, c_b1, c_amp, B, B_d1, B_d2):
+    # Fast BLAS matrix multiplications
+    phi_vec = B @ c
+    E0_vec = B @ c_E0
+    E_vec = -(B_d1 @ c) * 10.0
+    grad_vec = -(B_d2 @ c) * 10.0
+    b0_vec = B @ c_b0
+    b1_vec = B @ c_b1
+    amp_vec = B @ c_amp
+    return phi_vec, E0_vec, E_vec, grad_vec, b0_vec, b1_vec, amp_vec
+
+@njit(parallel=True, fastmath=True, cache=True)
+def _apply_bg_numba(S_pred, amp_vec, b0_vec, b1_vec, f_shifted):
+    # Bypasses intermediate large memory allocations typical of NumPy broadcasting
+    out = np.empty_like(S_pred)
+    for i in prange(S_pred.shape[0]):
+        for j in range(S_pred.shape[1]):
+            out[i, j] = S_pred[i, j] * amp_vec[i] + b0_vec[i] * f_shifted[j] + b1_vec[i]
+    return out
+
+@njit(fastmath=True, cache=True)
+def _calc_prior_res_numba(c, c_E0, c_b0, c_b1, c_amp, D, smooth_param, smooth_param_E0):
+    # Calculate penalties efficiently
+    prior_res = np.sqrt(smooth_param) * (D @ c)
+    prior_res_E0 = np.sqrt(smooth_param_E0) * (D @ c_E0)
+    prior_res_b0 = np.sqrt(smooth_param * 0.1) * (D @ c_b0)
+    prior_res_b1 = np.sqrt(smooth_param * 0.1) * (D @ c_b1)
+    prior_res_amp = np.sqrt(smooth_param * 0.1) * (D @ c_amp)
+    return prior_res, prior_res_E0, prior_res_b0, prior_res_b1, prior_res_amp
+
+
+class BSplinePoissonModel1D_numba(BSplinePoissonModel1D):
+    """
+    Numba-accelerated drop-in replacement for BSplinePoissonModel1D.
+    """
+    def forward_physics(self, params, coeffs=None):
+        if coeffs is None:
+            c = np.array([params[f'c_{i}'].value for i in range(self.n_splines)])
+            c_E0 = np.array([params[f'c_E0_{i}'].value for i in range(self.n_splines)])
+            c_b0 = np.array([params[f'c_b0_{i}'].value for i in range(self.n_splines)])
+            c_b1 = np.array([params[f'c_b1_{i}'].value for i in range(self.n_splines)])
+            c_amp = np.array([params[f'c_amp_{i}'].value for i in range(self.n_splines)])
+        else:
+            c, c_E0, c_b0, c_b1, c_amp = coeffs
+
+        # Evaluate vectors using optimized Numba
+        phi_vec, E0_vec, E_vec, grad_vec, b0_vec, b1_vec, amp_vec = _bspline_eval_vectors_numba(
+            c, c_E0, c_b0, c_b1, c_amp, self.B, self.B_d1, self.B_d2
+        )
+        
+        fshift = params['fshift'].value if 'fshift' in params else 0.0
+        f_shifted = self.f - fshift
+
+        S_pred = self.signal_sim.holtsmark_spectrum(
+            f_shifted, params, efield=E_vec, grad_vec=grad_vec, E0=E0_vec, amp=1.0)
+        
+        # Parallelly apply background offsets and spatial amplitudes 
+        S_pred = _apply_bg_numba(S_pred, amp_vec, b0_vec, b1_vec, f_shifted)
+
+        if S_pred.shape != self.data.shape and S_pred.T.shape == self.data.shape:
+            S_pred = S_pred.T
+            
+        return S_pred, E_vec, grad_vec, phi_vec, E0_vec
+
+    def residuals(self, 
+                  params: Parameters,
+                  freq: NDArray, 
+                  data: NDArray, 
+                  data_err: NDArray|None = None
+                  ) -> NDArray:
+        
+        c = np.array([params[f'c_{i}'].value for i in range(self.n_splines)])
+        c_E0 = np.array([params[f'c_E0_{i}'].value for i in range(self.n_splines)])
+        c_b0 = np.array([params[f'c_b0_{i}'].value for i in range(self.n_splines)])
+        c_b1 = np.array([params[f'c_b1_{i}'].value for i in range(self.n_splines)])
+        c_amp = np.array([params[f'c_amp_{i}'].value for i in range(self.n_splines)])
+        
+        coeffs = (c, c_E0, c_b0, c_b1, c_amp)
+        S_pred, E_vec, _, phi_vec, E0_vec = self.forward_physics(params, coeffs=coeffs)
+
+        data_norm = data / self.data_max
+        difference = data_norm - S_pred
+        
+        if data_err is None:
+            data_res = difference.flatten()
+        else:
+            data_err_norm = data_err / self.data_max
+            data_res = (difference / data_err_norm).flatten()
+            
+        # Extracted spline smoothing penalties calculated in Numba
+        prior_res, prior_res_E0, prior_res_b0, prior_res_b1, prior_res_amp = _calc_prior_res_numba(
+            c, c_E0, c_b0, c_b1, c_amp, self.D, self.smooth_param, self.smooth_param_E0
+        )
+        
+        return np.concatenate([data_res, prior_res, prior_res_E0, prior_res_b0, prior_res_b1, prior_res_amp])
