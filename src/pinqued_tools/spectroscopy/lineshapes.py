@@ -8,6 +8,7 @@ from numpy.typing import NDArray
 from abc import ABC
 
 from scipy.interpolate import interp1d
+from scipy.integrate import quad
 
 def gaussian(freq: NDArray, 
              fpos: float = 0.0, # Units of `freq`
@@ -111,12 +112,18 @@ from numpy.typing import NDArray
 from scipy.interpolate import interp1d, RegularGridInterpolator, CubicSpline
 from numba import njit, prange
 
+
+
+# --Holtsmark lineshape --
 @njit(parallel=True, fastmath=True)
 def _fast_lorentzian_sum(freq: NDArray, 
                          shifts_flat: NDArray, 
                          weights_flat: NDArray, 
                          width: float, 
                          amplitude: float = 1.0) -> NDArray:
+    '''
+    Fast Lorentzian sum using Numba JIT compilation.
+    '''
     spectrum = np.zeros(freq.shape[0], dtype=np.float64)
     gamma_half = width / 2.0
     gamma_half_sq = gamma_half**2
@@ -342,7 +349,6 @@ class HoltsmarkLine(BaseSpectralLine):
     
     def _integrate_holtsmark(self, beta):
         """Rigorous Holtsmark integral definition."""
-        from scipy.integrate import quad
         if beta == 0: return 0.0
         integrand = lambda x: x * np.sin(beta * x) * np.exp(-(x**1.5))
         result, _ = quad(integrand, 0, np.inf, limit=200)
