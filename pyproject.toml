@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pinqued-tools"
-version = "0.0.11"
+version = "0.0.12"
 description = 'Classes and utility functions for PINQUED project'
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,7 +35,8 @@ dependencies = [
     "scikit-learn",
     "lmfit",
     "pytest",
-    "pybaselines"
+    "pybaselines",
+    "numba"
 ]
 
 [project.urls]
