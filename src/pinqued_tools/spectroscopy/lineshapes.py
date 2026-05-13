@@ -359,8 +359,6 @@ class HoltsmarkLine(BaseSpectralLine):
         
         betas = self.E_grid / E0
         weights = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals) * self.dE
-        weights_unmasked = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals) * self.dE
-        weights_sum = np.sum(weights_unmasked)
         
         # Calculate Total Electric Field (Scalar Approximation)
         E_tot = efield + self.E_grid
@@ -370,10 +368,8 @@ class HoltsmarkLine(BaseSpectralLine):
         E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
         shifts = np.interp(E_tot_clear, self._dense_efield, self._dense_stark)
         weights = weights * valid_mask
-        weights = weights_unmasked * valid_mask
         
         return _fast_lorentzian_sum(freq, shifts, weights, width, amplitude)
-        return _fast_lorentzian_sum(freq, shifts, weights, width, amplitude, weights_sum)
     
     def line2d(self, freq: NDArray, 
                efield: float = 0.0, 
@@ -395,15 +391,11 @@ class HoltsmarkLine(BaseSpectralLine):
 
         weights_2d = H_vals[:, np.newaxis] * self.dE * 0.5 * self.sin_theta_dTheta
         weights_2d = weights_2d * valid_mask
-        weights_unmasked = H_vals[:, np.newaxis] * self.dE * 0.5 * self.sin_theta_dTheta
-        weights_sum = np.sum(weights_unmasked)
-        weights_2d = weights_unmasked * valid_mask
 
         shifts_flat = shifts_2d.flatten()
         weights_flat = weights_2d.flatten()
 
         return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
-        return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude, weights_sum)
     
     def _integrate_holtsmark(self, beta):
         """Rigorous Holtsmark integral definition."""
