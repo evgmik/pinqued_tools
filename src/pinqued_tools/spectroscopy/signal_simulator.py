@@ -16,7 +16,7 @@ import pandas as pd
 from lmfit import minimize, Parameters, fit_report
 
 from pinqued_tools.spectroscopy.spectrum import SpectralData, Axes0D
-from pinqued_tools.spectroscopy.lineshapes import HoltsmarkLine
+from pinqued_tools.spectroscopy.lineshapes import HoltsmarkLine, HoltsmarkLineCupy
 from pinqued_tools.spectroscopy.field_reference import FieldReference
 
 class SignalSimulator():
@@ -54,7 +54,7 @@ class SignalSimulator():
         for key in line_keys:
              print(f'Preparing Holtsmark line for {key}...')
              stark_reference = self._reference.detunings[key]
-             hline = HoltsmarkLine(efield_reference, stark_reference)
+             hline = HoltsmarkLineCupy(efield_reference, stark_reference)
              # 1. Define your 4D parameter space
              freq_grid = np.linspace(-1200, 400, 300)  # <-- The frequency axis for the LUT
              efield_grid = np.linspace(0.0, 45.0, 30)
@@ -165,7 +165,8 @@ class GPPoissonSignalSimulator1D(SignalSimulator):
                            efield: float|None = None,
                            grad_vec: float|None = None,
                            E0: float|None = None,
-                           amp: float|None = None
+                           amp: float|None = None,
+                           n_subsamples: int = 3
                            ) -> NDArray:
         '''
         Simulate EIT signal for a given electric field using the Holtsmark lineshape.
@@ -188,18 +189,20 @@ class GPPoissonSignalSimulator1D(SignalSimulator):
             spectrum = np.zeros((len(efield), len(freq)))
         else:
             spectrum = np.zeros_like(freq, dtype=np.float64)
-            
-        if params['grad_correct'] is not None:
-            grad_correct = params['grad_correct'].value
-        else:
-            grad_correct = 1.0
         
         for i, (hline, ai) in enumerate(zip(self._hline_list, r_amp)):
-            width_smear = width + (dfdE[i] * grad_vec * self.px_size * grad_correct)
-            # Explicitly trigger 'lut' model to pass arrays effectively.
-            # Use np.abs(efield) to prevent querying the LUT with negative fields which return 0.0
-            spectrum += hline(freq, efield=efield, width=width_smear, E0=E0, amplitude=ai, model='lut')
-            
+            if n_subsamples > 1:
+                hline_smeared = 0.0
+                # Distribute subsamples evenly across the pixel from -0.5 to 0.5
+                offsets = np.linspace(-0.5, 0.5, n_subsamples)
+                for offset in offsets:
+                    # Ensure absolute efield to prevent negative LUT queries
+                    efield_smear = np.abs(efield + grad_vec * self.px_size * offset)
+                    hline_smeared += hline(freq, efield=efield_smear, width=width, E0=E0, amplitude=ai, model='lut')
+                hline_smeared /= n_subsamples
+            else:
+                hline_smeared = hline(freq, efield=np.abs(efield), width=width, E0=E0, amplitude=ai, model='lut')
+            spectrum += hline_smeared 
         spectrum *= scale_factor
         return spectrum
 

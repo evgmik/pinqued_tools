@@ -112,7 +112,8 @@ from numpy.typing import NDArray
 from scipy.interpolate import interp1d, RegularGridInterpolator, CubicSpline
 from numba import njit, prange
 
-
+import cupy as cp
+from cupyx.scipy.ndimage import map_coordinates
 
 # --Holtsmark lineshape --
 @njit(parallel=True, fastmath=True)
@@ -203,25 +204,29 @@ class HoltsmarkLine(BaseSpectralLine):
         if base_model == '2d':
             for j, efield in enumerate(efield_grid):
                 E_tot = np.sqrt(efield**2 + self.Em_matrix**2 + 2 * efield * self.Em_matrix * self.cos_theta)
+                valid_mask = E_tot <= self._dense_efield[-1]
                 E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
                 shifts_flat = np.interp(E_tot_clear, self._dense_efield, self._dense_stark).flatten()
                 
                 for i, E0 in enumerate(E0_grid):
                     betas = self.E_grid / E0
                     H_vals = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals)
-                    weights_flat = (H_vals[:, np.newaxis] * self.dE * 0.5 * self.sin_theta_dTheta).flatten()
+                    weights_2d = H_vals[:, np.newaxis] * self.dE * 0.5 * self.sin_theta_dTheta
+                    weights_flat = (weights_2d * valid_mask).flatten()
                     
                     for k, width in enumerate(width_grid): 
                         library[i, j, k, :] = _fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
         else:
             for j, efield in enumerate(efield_grid):
                 E_tot = efield + self.E_grid
+                valid_mask = E_tot <= self._dense_efield[-1]
                 E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
                 shifts_flat = np.interp(E_tot_clear, self._dense_efield, self._dense_stark)
                 
                 for i, E0 in enumerate(E0_grid):
                     betas = self.E_grid / E0
                     weights_flat = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals) * self.dE
+                    weights_flat = weights_flat * valid_mask
                     
                     for k, width in enumerate(width_grid):
                         library[i, j, k, :] = _fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
@@ -233,7 +238,48 @@ class HoltsmarkLine(BaseSpectralLine):
             bounds_error=False, 
             fill_value=0.0
         )
+
         print("LUT Build Complete.")
+
+    def save_lut(self, file_path: str) -> None:
+        """
+        Saves the generated 4D Look-Up Table to a compressed numpy .npz file.
+        """
+        if self._lut_interpolator is None:
+            raise RuntimeError("LUT not initialized. Call `build_lut()` first.")
+            
+        grid_E0, grid_E, grid_W, grid_f = self._lut_interpolator.grid
+        np.savez_compressed(
+            file_path,
+            E0_grid=grid_E0,
+            efield_grid=grid_E,
+            width_grid=grid_W,
+            freq_grid=grid_f,
+            library=self._lut_interpolator.values
+        )
+        print(f"LUT successfully saved to {file_path}")
+
+    def save_lut_hdf5(self, file_path: str, group_name: str = 'holtsmark_lut') -> None:
+        """
+        Saves the generated 4D Look-Up Table to an HDF5 file.
+        """
+        import h5py
+        if self._lut_interpolator is None:
+            raise RuntimeError("LUT not initialized. Call `build_lut()` first.")
+            
+        grid_E0, grid_E, grid_W, grid_f = self._lut_interpolator.grid
+        
+        with h5py.File(file_path, 'a') as f:
+            # Remove the group if it already exists to overwrite it cleanly
+            if group_name in f:
+                del f[group_name]
+            group = f.create_group(group_name)
+            group.create_dataset('E0_grid', data=grid_E0)
+            group.create_dataset('efield_grid', data=grid_E)
+            group.create_dataset('width_grid', data=grid_W)
+            group.create_dataset('freq_grid', data=grid_f)
+            group.create_dataset('library', data=self._lut_interpolator.values, compression='gzip', compression_opts=9)
+        print(f"LUT successfully saved to {file_path} in group '{group_name}'")
 
     def line_lut(self, freq: NDArray, 
                  efield: float|NDArray = 0.0, 
@@ -313,15 +359,21 @@ class HoltsmarkLine(BaseSpectralLine):
         
         betas = self.E_grid / E0
         weights = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals) * self.dE
+        weights_unmasked = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals) * self.dE
+        weights_sum = np.sum(weights_unmasked)
         
         # Calculate Total Electric Field (Scalar Approximation)
         E_tot = efield + self.E_grid
+        valid_mask = E_tot <= self._dense_efield[-1]
         
         # Clip to avoid interpolation errors and get Stark shifts
         E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
         shifts = np.interp(E_tot_clear, self._dense_efield, self._dense_stark)
+        weights = weights * valid_mask
+        weights = weights_unmasked * valid_mask
         
         return _fast_lorentzian_sum(freq, shifts, weights, width, amplitude)
+        return _fast_lorentzian_sum(freq, shifts, weights, width, amplitude, weights_sum)
     
     def line2d(self, freq: NDArray, 
                efield: float = 0.0, 
@@ -336,16 +388,22 @@ class HoltsmarkLine(BaseSpectralLine):
         H_vals = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals)
 
         E_tot = np.sqrt(efield**2 + self.Em_matrix**2 + 2 * efield * self.Em_matrix * self.cos_theta)
+        valid_mask = E_tot <= self._dense_efield[-1]
 
         E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
         shifts_2d = np.interp(E_tot_clear, self._dense_efield, self._dense_stark)
 
         weights_2d = H_vals[:, np.newaxis] * self.dE * 0.5 * self.sin_theta_dTheta
+        weights_2d = weights_2d * valid_mask
+        weights_unmasked = H_vals[:, np.newaxis] * self.dE * 0.5 * self.sin_theta_dTheta
+        weights_sum = np.sum(weights_unmasked)
+        weights_2d = weights_unmasked * valid_mask
 
         shifts_flat = shifts_2d.flatten()
         weights_flat = weights_2d.flatten()
 
         return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
+        return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude, weights_sum)
     
     def _integrate_holtsmark(self, beta):
         """Rigorous Holtsmark integral definition."""
@@ -354,6 +412,137 @@ class HoltsmarkLine(BaseSpectralLine):
         result, _ = quad(integrand, 0, np.inf, limit=200)
         return (2.0 / np.pi) * result
         
+
+class HoltsmarkLineCupy(HoltsmarkLine):
+    '''
+    CuPy-accelerated Holtsmark lineshape.
+    Stores the Look-Up Table on the GPU and evaluates it using 
+    optimized `map_coordinates` to bypass SciPy's overhead.
+    '''
+    def build_lut(self, 
+                  freq_grid: NDArray, 
+                  efield_grid: NDArray, 
+                  E0_grid: NDArray, 
+                  width_grid: NDArray,
+                  base_model: str = '2d'):
+        # 1. Build CPU LUT first via the parent class
+        super().build_lut(freq_grid, efield_grid, E0_grid, width_grid, base_model)
+        
+        # 2. Extract boundaries as native floats to prevent implicit GPU-syncs during np.clip
+        self._grid_boundaries = [
+            (float(E0_grid[0]), float(E0_grid[-1])),
+            (float(efield_grid[0]), float(efield_grid[-1])),
+            (float(width_grid[0]), float(width_grid[-1])),
+            (float(freq_grid[0]), float(freq_grid[-1]))
+        ]
+        
+        # 3. Precompute properties for fast physical-to-index mapping
+        self._grid_mins_cp = cp.array([E0_grid[0], efield_grid[0], width_grid[0], freq_grid[0]])
+        self._grid_maxs_cp = cp.array([E0_grid[-1], efield_grid[-1], width_grid[-1], freq_grid[-1]])
+        self._grid_ns_cp = cp.array([len(E0_grid)-1, len(efield_grid)-1, len(width_grid)-1, len(freq_grid)-1])
+        
+        # 4. Transfer the library to the GPU
+        print("Transferring LUT to GPU...")
+        self._lut_cp = cp.asarray(self._lut_interpolator.values)
+        print("GPU Transfer Complete.")
+
+    def save_lut_hdf5(self, file_path: str, group_name: str = 'holtsmark_lut') -> None:
+        """
+        Saves the CuPy 4D Look-Up Table directly from the GPU to an HDF5 file.
+        """
+        import h5py
+        if getattr(self, '_lut_cp', None) is None:
+            raise RuntimeError("CuPy LUT not initialized. Call `build_lut()` first.")
+            
+        with h5py.File(file_path, 'a') as f:
+            # Remove the group if it already exists to overwrite it cleanly
+            if group_name in f:
+                del f[group_name]
+            group = f.create_group(group_name)
+            
+            # Fetch original grids from the base CPU interpolator if it exists
+            if getattr(self, '_lut_interpolator', None) is not None:
+                grid_E0, grid_E, grid_W, grid_f = self._lut_interpolator.grid
+            else:
+                # Reconstruct grids natively from CuPy boundaries if CPU LUT was cleared
+                bE0, bE, bW, bF = self._grid_boundaries
+                ns = self._grid_ns_cp.get()
+                grid_E0 = np.linspace(bE0[0], bE0[1], int(ns[0] + 1))
+                grid_E  = np.linspace(bE[0], bE[1], int(ns[1] + 1))
+                grid_W  = np.linspace(bW[0], bW[1], int(ns[2] + 1))
+                grid_f  = np.linspace(bF[0], bF[1], int(ns[3] + 1))
+                
+            group.create_dataset('E0_grid', data=grid_E0)
+            group.create_dataset('efield_grid', data=grid_E)
+            group.create_dataset('width_grid', data=grid_W)
+            group.create_dataset('freq_grid', data=grid_f)
+            # Transfer array from GPU to CPU to be saved by h5py
+            group.create_dataset('library', data=self._lut_cp.get(), compression='gzip', compression_opts=9)
+        print(f"CuPy LUT successfully saved to {file_path} in group '{group_name}'")
+
+    def line_lut(self, freq: NDArray, 
+                 efield: float|NDArray = 0.0, 
+                 width: float|NDArray = 20.0, 
+                 E0: float|NDArray = 3.0, 
+                 amplitude: float|NDArray = 1.0) -> NDArray:
+        if getattr(self, '_lut_cp', None) is None:
+            raise RuntimeError("CuPy LUT not initialized. Call `build_lut()` first.")
+            
+        bE0, bE, bW, bF = self._grid_boundaries
+        E0 = np.clip(E0, bE0[0], bE0[1])
+        efield = np.clip(efield, bE[0], bE[1])
+        width = np.clip(width, bW[0], bW[1])
+
+        # Move queries to GPU
+        E0_cp = cp.asarray(E0)
+        efield_cp = cp.asarray(efield)
+        width_cp = cp.asarray(width)
+        freq_cp = cp.asarray(freq)
+
+        # Convert physical values to fractional indices natively on the GPU
+        def to_idx(val, axis):
+            vmin = self._grid_mins_cp[axis]
+            vmax = self._grid_maxs_cp[axis]
+            n = self._grid_ns_cp[axis]
+            return (val - vmin) / (vmax - vmin) * n
+
+        E0_idx = to_idx(E0_cp, 0)
+        E_idx = to_idx(efield_cp, 1)
+        W_idx = to_idx(width_cp, 2)
+        f_idx = to_idx(freq_cp, 3)
+
+        # Scalar evaluation
+        if efield_cp.ndim == 0 and width_cp.ndim == 0 and E0_cp.ndim == 0:
+            coords = cp.stack([
+                cp.full_like(f_idx, E0_idx),
+                cp.full_like(f_idx, E_idx),
+                cp.full_like(f_idx, W_idx),
+                f_idx
+            ])
+            spectrum_cp = map_coordinates(self._lut_cp, coords, order=1, mode='nearest')
+            return np.asarray(amplitude) * spectrum_cp.get()
+            
+        # 2D Array evaluation
+        E0_b, efield_b, width_b = cp.broadcast_arrays(E0_idx, E_idx, W_idx)
+        E0_grid, freq_grid = cp.meshgrid(E0_b, f_idx, indexing='ij')
+        efield_grid, _ = cp.meshgrid(efield_b, f_idx, indexing='ij')
+        width_grid, _ = cp.meshgrid(width_b, f_idx, indexing='ij')
+        
+        coords = cp.stack([
+            E0_grid.ravel(),
+            efield_grid.ravel(),
+            width_grid.ravel(),
+            freq_grid.ravel()
+        ])
+        
+        spectrum_cp = map_coordinates(self._lut_cp, coords, order=1, mode='nearest')
+        spectrum = spectrum_cp.get().reshape(efield_grid.shape)
+        
+        if np.ndim(amplitude) > 0:
+            amplitude = np.asarray(amplitude)[:, np.newaxis]
+            
+        return amplitude * spectrum
+
 #%%
 if __name__=='__main__':
     # Apply custom plotting style

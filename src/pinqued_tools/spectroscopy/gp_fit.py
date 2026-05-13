@@ -252,7 +252,7 @@ class BSplinePoissonModel1D():
         """
         params = base_params.copy()
         
-        # Model background and amplitude using B-splines to drastically reduce parameter count
+        # Model background and amplitude using B-splines to reduce parameter count
         init_amp = params['amp'].value if 'amp' in params else 100.0
         for i in range(self.n_splines):
             if f'c_b0_{i}' not in params:
@@ -275,7 +275,7 @@ class BSplinePoissonModel1D():
         params.add(f'c_{self.n_splines - 1}', value=0.0, vary=False)
         for i in range(self.n_splines - 2, -1, -1):
             delta_init = max(0.0, c_init[i] - c_init[i+1])
-            params.add(f'delta_c_{i}', value=delta_init, min=0.0)
+            params.add(f'delta_c_{i}', value=delta_init)
             params.add(f'c_{i}', expr=f'c_{i+1} + delta_c_{i}')
             
         # Constrain E0 to a physical ceiling
