@@ -54,7 +54,7 @@ class SignalSimulator():
         for key in line_keys:
              print(f'Preparing Holtsmark line for {key}...')
              stark_reference = self._reference.detunings[key]
-             hline = HoltsmarkLineCupy(efield_reference, stark_reference)
+             hline = HoltsmarkLine(efield_reference, stark_reference)
              # 1. Define your 4D parameter space
              freq_grid = np.linspace(-1200, 400, 300)  # <-- The frequency axis for the LUT
              efield_grid = np.linspace(0.0, 45.0, 30)

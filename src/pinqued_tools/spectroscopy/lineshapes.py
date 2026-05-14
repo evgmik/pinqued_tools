@@ -137,7 +137,13 @@ def _fast_lorentzian_sum(freq: NDArray,
             val += weights_flat[j] * gamma_half_sq / (detuning**2 + gamma_half_sq)
         spectrum[i] = val
         
-    total_area = np.pi * gamma_half * np.sum(weights_flat)
+    # Analytical normalization over all space prevents artificial 
+    # amplitude explosion when a peak shifts outside the frequency window
+    # We omit np.sum(weights_flat) here to ensure that if the microfield 
+    # distribution is truncated (e.g. at high E0), the missing probability mass 
+    # correctly reduces the peak amplitude rather than artificially inflating it.
+    total_area = np.pi * gamma_half 
+      
     if total_area > 0:
         return amplitude * spectrum / total_area
         
@@ -158,33 +164,53 @@ class HoltsmarkLine(BaseSpectralLine):
         self.stark_interp = CubicSpline(efield_reference, stark_reference, extrapolate=False)
         self._efield_reference = efield_reference
         
-        # Dense linear grid for Stark shifts
-        self._dense_efield = np.linspace(efield_reference[0], efield_reference[-1], 100000)
-        self._dense_stark = self.stark_interp(self._dense_efield)
+        # Safe linear extrapolation up to 10x the calibration limit.
+        # This prevents the Holtsmark tail from being truncated.
+        max_ref_E = efield_reference[-1]
+        self._dense_efield = np.linspace(efield_reference[0], max_ref_E * 10.0, 200000)
+        self._dense_stark = np.zeros_like(self._dense_efield)
         
-        # 1. Define the integration grid for the Electric Field
-        self.E_grid = np.linspace(1e-3, efield_reference[-1], n_efield_points)
-        self.dE = self.E_grid[1] - self.E_grid[0]
+        valid = self._dense_efield <= max_ref_E
+        self._dense_stark[valid] = self.stark_interp(self._dense_efield[valid])
         
-        # 2. Pre-compute the Holtsmark H(beta) interpolator for speed
+        last_stark = self.stark_interp(max_ref_E)
+        last_slope = self.stark_interp(max_ref_E, nu=1)
+        self._dense_stark[~valid] = last_stark + last_slope * (self._dense_efield[~valid] - max_ref_E)
+        
+        # 1. Pre-compute Holtsmark distribution and its analytical integral C(u)
         betas = np.linspace(0, 20.0, 2000)
         h_vals = np.array([self._integrate_holtsmark(b) for b in betas])
         self.H_beta_interp = interp1d(betas, h_vals, kind='cubic', bounds_error=False, fill_value=0.0)
         
-        # 2b. Dense linear grid for H(beta)
-        self._dense_betas = np.linspace(0, 20.0, 100000)
+        self._dense_betas = np.linspace(0, 100.0, 200000)
         self._dense_h_vals = self.H_beta_interp(self._dense_betas)
         
-        # 3. Placeholder for the LUT 3D Interpolator
+        # Extend analytical tail for beta > 20.0 (H(beta) -> 1.496 * beta^-2.5)
+        tail_mask = self._dense_betas > 20.0
+        self._dense_h_vals[tail_mask] = 1.496 / (self._dense_betas[tail_mask]**2.5)
+
+        from scipy.integrate import cumulative_trapezoid
+        integrand = np.zeros_like(self._dense_betas)
+        integrand[1:] = self._dense_h_vals[1:] / self._dense_betas[1:]
+        self._C_u_vals = cumulative_trapezoid(integrand, self._dense_betas, initial=0.0)
+
         self._lut_interpolator = None
 
-        # Precompute 2D grid invariants
-        self.theta_points = 20
-        self.theta_grid = np.linspace(0, np.pi, self.theta_points)
-        self.dTheta = self.theta_grid[1] - self.theta_grid[0]
-        self.Em_matrix, self.theta_matrix = np.meshgrid(self.E_grid, self.theta_grid, indexing='ij')
-        self.cos_theta = np.cos(self.theta_matrix)
-        self.sin_theta_dTheta = np.sin(self.theta_matrix) * self.dTheta
+    def _get_P_Etot(self, Etot_grid: NDArray, efield: float, E0: float) -> NDArray:
+        """Exact analytical 1D projection of the 2D macroscopic + microfield sum."""
+        E0 = max(E0, 1e-6)
+        if efield < 1e-6:
+            betas = Etot_grid / E0
+            H_vals = np.interp(betas, self._dense_betas, self._dense_h_vals, left=0.0, right=0.0)
+            return (1.0 / E0) * H_vals
+
+        u_max = (Etot_grid + efield) / E0
+        u_min = np.abs(Etot_grid - efield) / E0
+
+        C_max = np.interp(u_max, self._dense_betas, self._C_u_vals, left=0.0, right=self._C_u_vals[-1])
+        C_min = np.interp(u_min, self._dense_betas, self._C_u_vals, left=0.0, right=self._C_u_vals[-1])
+
+        return (Etot_grid / (2.0 * efield * E0)) * (C_max - C_min)
 
     def build_lut(self, 
                   freq_grid: NDArray, 
@@ -197,36 +223,28 @@ class HoltsmarkLine(BaseSpectralLine):
         """
         print(f"Building 4D Lineshape Library: {len(E0_grid)}x{len(efield_grid)}x{len(width_grid)}x{len(freq_grid)} points...")
         
-        # 1. Allocate the 4D block of memory
         library = np.zeros((len(E0_grid), len(efield_grid), len(width_grid), len(freq_grid)))
         
-        # 2. Populate the grid
+        # Use an ultra-dense Etot grid to prevent any interpolation aliasing
+        Etot_grid = np.linspace(0.0, self._dense_efield[-1], 20000)
+        dEtot = Etot_grid[1] - Etot_grid[0]
+        shifts_flat = np.interp(Etot_grid, self._dense_efield, self._dense_stark)
+
         if base_model == '2d':
             for j, efield in enumerate(efield_grid):
-                E_tot = np.sqrt(efield**2 + self.Em_matrix**2 + 2 * efield * self.Em_matrix * self.cos_theta)
-                valid_mask = E_tot <= self._dense_efield[-1]
-                E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
-                shifts_flat = np.interp(E_tot_clear, self._dense_efield, self._dense_stark).flatten()
-                
                 for i, E0 in enumerate(E0_grid):
-                    betas = self.E_grid / E0
-                    H_vals = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals)
-                    weights_2d = H_vals[:, np.newaxis] * self.dE * 0.5 * self.sin_theta_dTheta
-                    weights_flat = (weights_2d * valid_mask).flatten()
+                    weights_flat = self._get_P_Etot(Etot_grid, efield, E0) * dEtot
                     
                     for k, width in enumerate(width_grid): 
                         library[i, j, k, :] = _fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
         else:
             for j, efield in enumerate(efield_grid):
-                E_tot = efield + self.E_grid
-                valid_mask = E_tot <= self._dense_efield[-1]
-                E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
-                shifts_flat = np.interp(E_tot_clear, self._dense_efield, self._dense_stark)
-                
                 for i, E0 in enumerate(E0_grid):
-                    betas = self.E_grid / E0
-                    weights_flat = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals) * self.dE
-                    weights_flat = weights_flat * valid_mask
+                    E_m = Etot_grid - efield
+                    valid_mask = E_m >= 0
+                    betas = E_m / max(E0, 1e-6)
+                    H_vals = np.interp(betas, self._dense_betas, self._dense_h_vals, left=0.0, right=0.0)
+                    weights_flat = (1.0 / max(E0, 1e-6)) * H_vals * dEtot * valid_mask
                     
                     for k, width in enumerate(width_grid):
                         library[i, j, k, :] = _fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
@@ -357,19 +375,20 @@ class HoltsmarkLine(BaseSpectralLine):
                  E0: float = 3.0, 
                  amplitude: float = 1.0) -> NDArray:
         
-        betas = self.E_grid / E0
-        weights = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals) * self.dE
-        
-        # Calculate Total Electric Field (Scalar Approximation)
-        E_tot = efield + self.E_grid
-        valid_mask = E_tot <= self._dense_efield[-1]
-        
-        # Clip to avoid interpolation errors and get Stark shifts
-        E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
-        shifts = np.interp(E_tot_clear, self._dense_efield, self._dense_stark)
-        weights = weights * valid_mask
-        
-        return _fast_lorentzian_sum(freq, shifts, weights, width, amplitude)
+        E0_safe = max(E0, 1e-6)
+        E_max = min(efield + 20.0 * E0_safe, self._dense_efield[-1])
+        Etot_grid = np.linspace(0.0, max(E_max, 1e-3), 10000)
+        dEtot = Etot_grid[1] - Etot_grid[0]
+
+        E_m = Etot_grid - efield
+        valid_mask = E_m >= 0
+        betas = E_m / E0_safe
+        H_vals = np.interp(betas, self._dense_betas, self._dense_h_vals, left=0.0, right=0.0)
+        weights_flat = (1.0 / E0_safe) * H_vals * dEtot * valid_mask
+
+        shifts_flat = np.interp(Etot_grid, self._dense_efield, self._dense_stark)
+
+        return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
     
     def line2d(self, freq: NDArray, 
                efield: float = 0.0, 
@@ -380,20 +399,13 @@ class HoltsmarkLine(BaseSpectralLine):
         Generates the lineshape using a 2D vector summation of the external 
         DC field and the isotropic Holtsmark microfield.
         """
-        betas = self.E_grid / E0
-        H_vals = (1.0 / E0) * np.interp(betas, self._dense_betas, self._dense_h_vals)
+        E0_safe = max(E0, 1e-6)
+        E_max = min(efield + 20.0 * E0_safe, self._dense_efield[-1])
+        Etot_grid = np.linspace(0.0, max(E_max, 1e-3), 10000)
+        dEtot = Etot_grid[1] - Etot_grid[0]
 
-        E_tot = np.sqrt(efield**2 + self.Em_matrix**2 + 2 * efield * self.Em_matrix * self.cos_theta)
-        valid_mask = E_tot <= self._dense_efield[-1]
-
-        E_tot_clear = np.clip(E_tot, self._dense_efield[0], self._dense_efield[-1])
-        shifts_2d = np.interp(E_tot_clear, self._dense_efield, self._dense_stark)
-
-        weights_2d = H_vals[:, np.newaxis] * self.dE * 0.5 * self.sin_theta_dTheta
-        weights_2d = weights_2d * valid_mask
-
-        shifts_flat = shifts_2d.flatten()
-        weights_flat = weights_2d.flatten()
+        weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
+        shifts_flat = np.interp(Etot_grid, self._dense_efield, self._dense_stark)
 
         return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
     
@@ -402,7 +414,7 @@ class HoltsmarkLine(BaseSpectralLine):
         if beta == 0: return 0.0
         integrand = lambda x: x * np.sin(beta * x) * np.exp(-(x**1.5))
         result, _ = quad(integrand, 0, np.inf, limit=200)
-        return (2.0 / np.pi) * result
+        return (2.0 / np.pi) * result * beta
         
 
 class HoltsmarkLineCupy(HoltsmarkLine):
@@ -511,7 +523,7 @@ class HoltsmarkLineCupy(HoltsmarkLine):
                 cp.full_like(f_idx, W_idx),
                 f_idx
             ])
-            spectrum_cp = map_coordinates(self._lut_cp, coords, order=1, mode='nearest')
+            spectrum_cp = map_coordinates(self._lut_cp, coords, order=1, mode='constant', cval=0.0)
             return np.asarray(amplitude) * spectrum_cp.get()
             
         # 2D Array evaluation
