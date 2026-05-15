@@ -414,7 +414,7 @@ class HoltsmarkLine(BaseSpectralLine):
         if beta == 0: return 0.0
         integrand = lambda x: x * np.sin(beta * x) * np.exp(-(x**1.5))
         result, _ = quad(integrand, 0, np.inf, limit=200)
-        return (2.0 / np.pi) * result * beta
+        return (2.0 * beta / np.pi) * result
         
 
 class HoltsmarkLineCupy(HoltsmarkLine):

@@ -280,7 +280,7 @@ class BSplinePoissonModel1D():
             
         # Constrain E0 to a physical ceiling
         for i in range(self.n_splines):
-            params.add(f'c_E0_{i}', value=c_E0_init[i], min=1e-3, max=25.0, vary=True)
+            params.add(f'c_E0_{i}', value=c_E0_init[i], min=1e-10, max=25.0, vary=True)
             
         # Enforce E -> 0 at the boundary deep in the plasma.
         if self.n_splines > 1 and self.zero_bnd_efield:
