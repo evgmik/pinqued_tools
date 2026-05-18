@@ -1,7 +1,5 @@
 #%%
 import numpy as np
-import matplotlib as mpl
-import matplotlib.pyplot as plt
 
 from numpy.typing import NDArray
 
@@ -417,6 +415,7 @@ class HoltsmarkLine(BaseSpectralLine):
 #%%
 if __name__=='__main__':
     # Apply custom plotting style
+    import matplotlib.pyplot as plt
     from pinqued_tools.analysis.plotting import set_mpl_style
     set_mpl_style()
 
