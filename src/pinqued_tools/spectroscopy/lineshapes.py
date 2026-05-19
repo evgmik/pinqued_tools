@@ -223,11 +223,43 @@ class HoltsmarkLine(BaseSpectralLine):
         print(f"Building 4D Lineshape Library: {len(E0_grid)}x{len(efield_grid)}x{len(width_grid)}x{len(freq_grid)} points...")
         
         library = np.zeros((len(E0_grid), len(efield_grid), len(width_grid), len(freq_grid)))
-        
-        # Use an ultra-dense Etot grid to prevent any interpolation aliasing
-        Etot_grid = np.linspace(0.0, self._dense_efield[-1], 20000)
-        dEtot = Etot_grid[1] - Etot_grid[0]
-        shifts_flat = np.interp(Etot_grid, self._dense_efield, self._dense_stark)
+
+        # let's be smart and find reasonable limits for possible E fields samples: Etot_grid
+        # there is no need to calculate spectra much beyond required freq_grid
+        fmin = freq_grid.min()
+        # points which stands more than 30 wavelength away do not contribute to a spectrum
+        fmin = fmin - 30*max(E0_grid.max(), width_grid.max())
+        # lets find which field correspond to such frequency shifts
+        if fmin > 0:
+            # FIXME take in account the case of Stark shift bending up to positive frequencies
+            print("WARNING: it is bad idea to make grid with left edge positive")
+            Emax=0
+        else:
+            # poor man equation solver
+            valid = (self._dense_stark < 0)
+            # interpolate need x in ascending order thus we put - sign below
+            # remember that DC Stark pushes down
+            Emax = np.interp(-fmin, -self._dense_stark[valid], self._dense_efield[valid])  # note x-y axis flip
+        # for the left border we just assign Emin=0 without attempt of optimization
+        Emin=0
+        assert Emin < Emax
+
+        fstep_min = max(E0_grid.max(), width_grid.max())/10  # linewidth/10 seems to be indistinguishable from a dense grid
+        # let's be smart and assign points for different spectra in frequency space
+        # this way we are not wasting CPU by doing over dense grid at low Efield
+        if np.all(self._dense_stark[1:] < 0):
+            shifts_flat = np.linspace(fmin, 0, int((-fmin)/fstep_min)+1)
+            # note we are flipping the usual stark map meaning with x-y axis flip
+            Etot_grid = np.interp(-shifts_flat, -self._dense_stark, self._dense_efield)
+            dEtot = np.zeros_like(Etot_grid)
+            dEtot[:-1] = -np.diff(Etot_grid)  # note the sign flip, since this actually used as a weight
+            dEtot[-1] = dEtot[-2]  # last step extrapolated
+        else:
+            # Stark shift is not monotonous: same frequency different E field
+            # resort to brute force
+            Etot_grid = np.linspace(Emin, Emax, 20000)
+            shifts_flat = np.interp(Etot_grid, self._dense_efield, self._dense_stark)
+            dEtot = Etot_grid[1] - Etot_grid[0]
 
         if base_model == '2d':
             for j, efield in enumerate(efield_grid):
