@@ -172,6 +172,7 @@ class HoltsmarkLine(BaseSpectralLine):
         last_stark = self.stark_interp(max_ref_E)
         last_slope = self.stark_interp(max_ref_E, nu=1)
         # we do linear approximation at the extended range
+        # FIXME: linear approximation is BAD for large Efield, it should be quadratic!
         self._dense_stark[-1] = last_stark + last_slope * (self._dense_efield[-1] - max_ref_E)
         
         # 1. Pre-compute Holtsmark distribution and its analytical integral C(u)
