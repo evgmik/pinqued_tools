@@ -157,7 +157,8 @@ class HoltsmarkLine(BaseSpectralLine):
         super().__init__(normalized)
 
         self.stark_interp = CubicSpline(efield_reference, stark_reference, extrapolate=False)
-        self._efield_reference = efield_reference
+        self._efield_reference = efield_reference.copy()
+        self._stark_reference= stark_reference.copy()
         
         # Safe linear extrapolation up to 10x the calibration limit.
         # This prevents the Holtsmark tail from being truncated.
