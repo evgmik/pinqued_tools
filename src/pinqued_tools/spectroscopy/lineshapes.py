@@ -184,6 +184,7 @@ class HoltsmarkLine(BaseSpectralLine):
         
         # Extend analytical tail for beta > 20.0 (H(beta) -> 1.496 * beta^-2.5)
         tail_mask = self._dense_betas > 20.0
+        # FIXME: 1.496 is close but not precise, small discontinuity is visible
         self._dense_h_vals[tail_mask] = 1.496 / (self._dense_betas[tail_mask]**2.5)
 
         from scipy.integrate import cumulative_trapezoid
