@@ -163,15 +163,16 @@ class HoltsmarkLine(BaseSpectralLine):
         # Safe linear extrapolation up to 10x the calibration limit.
         # This prevents the Holtsmark tail from being truncated.
         max_ref_E = efield_reference[-1]
-        self._dense_efield = np.linspace(efield_reference[0], max_ref_E * 10.0, 200000)
-        self._dense_stark = np.zeros_like(self._dense_efield)
-        
-        valid = self._dense_efield <= max_ref_E
-        self._dense_stark[valid] = self.stark_interp(self._dense_efield[valid])
-        
+        # no need to over interpolate (it makes things slow and results are the same)
+        self._dense_efield = np.zeros(len(self._efield_reference) + 1)
+        self._dense_stark = np.zeros(len(self._efield_reference) + 1)
+        self._dense_efield[:-1] = self._efield_reference[:]
+        self._dense_stark[:-1] = self._stark_reference[:]
+        self._dense_efield[-1] = self._efield_reference[-1]*10  # increase range by 10
         last_stark = self.stark_interp(max_ref_E)
         last_slope = self.stark_interp(max_ref_E, nu=1)
-        self._dense_stark[~valid] = last_stark + last_slope * (self._dense_efield[~valid] - max_ref_E)
+        # we do linear approximation at the extended range
+        self._dense_stark[-1] = last_stark + last_slope * (self._dense_efield[-1] - max_ref_E)
         
         # 1. Pre-compute Holtsmark distribution and its analytical integral C(u)
         betas = np.linspace(0, 20.0, 2000)
