@@ -244,7 +244,7 @@ class HoltsmarkLine(BaseSpectralLine):
         Emin=0
         assert Emin < Emax
 
-        fstep_min = max(E0_grid.max(), width_grid.max())/10  # linewidth/10 seems to be indistinguishable from a dense grid
+        fstep_min = max(E0_grid.min(), width_grid.min())/10  # linewidth/10 seems to be indistinguishable from a dense grid
         # let's be smart and assign points for different spectra in frequency space
         # this way we are not wasting CPU by doing over dense grid at low Efield
         if np.all(self._dense_stark[1:] < 0):
