@@ -144,6 +144,69 @@ def _fast_lorentzian_sum(freq: NDArray,
         
     return amplitude * spectrum
 
+class StarkMap():
+    """Do the Stark shift vs Electric field related calculation"""
+    def __init__(self, Efield_reference, freq_shift_reference, maxStarkShiftMisMatch=1e-3):
+        """Initialized with tabulated values of Stark shift vs Electric field
+        The Efield_reference must be provided in the ascending order
+        maxStarkShiftMisMatch - maximum allowed mistake by heuristic, in units of freq_shift_reference
+        """
+        self._Efield = Efield_reference.copy()  # Stark Electric field
+        self._freq = freq_shift_reference.copy()  # frequency of stark shift
+        #  Stark shift is quadratic for large enough Efield let's see if we can fit it with quadratic polynomial
+        self._maxStarkShiftMisMatch = maxStarkShiftMisMatch
+        self._approx_poly2ndOrder = np.poly1d(np.polyfit(self._Efield[-3:], self._freq[-3:], 2))  # we can always make parabola on 3 points
+        self._minEfild_for_poly2ndOderValidity = self._Efield[-3]
+        self._approx_highOrder = None
+
+        # let's try to extend the range where 2nd degree polynomial still fits
+        Np = len(self._Efield) 
+        left_end = 0
+        while (left_end < Np-3):
+            Efmin = self._Efield[left_end]
+            valid = self._Efield > Efmin
+            p2 = np.poly1d(np.polyfit(self._Efield[valid], self._freq[valid], 2))
+            if np.abs(p2(self._Efield[valid]) - self._freq[valid]).max() < self._maxStarkShiftMisMatch:
+                print(f"Stark map can be fitted with 2nd degree polynomial for E field > {Efmin}")
+                self._approx_poly2ndOrder = p2
+                self._minEfild_for_poly2ndOderValidity = self._Efield[left_end]
+                break
+            left_end += int(np.floor((Np - left_end)/2))
+
+        # now let's find hight order approximation within tabulated values
+        porder = 1
+        maxTestOrder = min(20, Np)
+        while(porder <= maxTestOrder):
+            porder += 1
+            phigh = np.poly1d(np.polyfit(self._Efield, self._freq, porder))
+            if np.abs(phigh(self._Efield) - self._freq).max() < self._maxStarkShiftMisMatch:
+                print(f"Tabulated Stark map can be fitted with {porder} degree polynomial")
+                print(f"Note that in #of points in the linear interpolator about 400,\n     linear interpolation is faster than even 2th order polynomial")
+                self._approx_highOrder = phigh
+                break
+
+
+    def Efield2freq(self, Efield, checkValidity=True):
+        """Return Stark shifts array vs provided Electric field array"""
+        f = np.zeros_like(Efield)
+        if checkValidity:
+            # For thousands points assertions add about 1uS (about 10% of total time)
+            assert np.all(Efield >= 0)
+
+        valid_for_poly2 = Efield > self._minEfild_for_poly2ndOderValidity
+        if np.any(valid_for_poly2):
+            f[valid_for_poly2] = self._approx_poly2ndOrder(Efield[valid_for_poly2])
+        within_tabulated = np.logical_not(valid_for_poly2)
+        if np.any(within_tabulated):
+            # FIXME improve logic and speed
+            f[within_tabulated] = np.interp(Efield[within_tabulated], self._Efield, self._freq)
+            # f[within_tabulated] = self._approx_highOrder(Efield[within_tabulated])
+            # if self._approx_highOrder is not None:
+                # f[within_tabulated] = self._approx_highOrder(Efield[within_tabulated])
+            # else:
+                # f[within_tabulated] = np.interp(Efield[within_tabulated], self._Efield, self._freq)
+        return f
+
 class HoltsmarkLine(BaseSpectralLine):
     '''
     Holtsmark lineshape as a subclass of `BaseSpectralLine`
@@ -159,6 +222,7 @@ class HoltsmarkLine(BaseSpectralLine):
         self.stark_interp = CubicSpline(efield_reference, stark_reference, extrapolate=False)
         self._efield_reference = efield_reference.copy()
         self._stark_reference= stark_reference.copy()
+        self.stark_map = StarkMap(self._efield_reference, self._stark_reference)
         
         # Safe linear extrapolation up to 10x the calibration limit.
         # This prevents the Holtsmark tail from being truncated.
@@ -436,7 +500,7 @@ class HoltsmarkLine(BaseSpectralLine):
         dEtot = Etot_grid[1] - Etot_grid[0]
 
         weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
-        shifts_flat = np.interp(Etot_grid, self._dense_efield, self._dense_stark)
+        shifts_flat = self.stark_map.Efield2freq(Etot_grid)
 
         return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
     
