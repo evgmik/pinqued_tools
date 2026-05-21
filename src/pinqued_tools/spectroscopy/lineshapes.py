@@ -174,7 +174,7 @@ class StarkMap():
         self._freq = freq_shift_reference.copy()  # frequency of stark shift
         #  Stark shift is quadratic for large enough Efield let's see if we can fit it with quadratic polynomial
         self._maxStarkShiftMisMatch = maxStarkShiftMisMatch
-        self._approx_poly2ndOrder = np.poly1d(np.polyfit(self._Efield[-3:], self._freq[-3:], 2))  # we can always make parabola on 3 points
+        self._approx_poly2ndOrder = Poly(np.polyfit(self._Efield[-3:], self._freq[-3:], 2))  # we can always make parabola on 3 points
         self._minEfild_for_poly2ndOderValidity = self._Efield[-3]
         self._approx_highOrder = None
 
@@ -184,7 +184,7 @@ class StarkMap():
         while (left_end < Np-3):
             Efmin = self._Efield[left_end]
             valid = self._Efield > Efmin
-            p2 = np.poly1d(np.polyfit(self._Efield[valid], self._freq[valid], 2))
+            p2 = Poly(np.polyfit(self._Efield[valid], self._freq[valid], 2))
             if np.abs(p2(self._Efield[valid]) - self._freq[valid]).max() < self._maxStarkShiftMisMatch:
                 print(f"Stark map can be fitted with 2nd degree polynomial for E field > {Efmin}")
                 self._approx_poly2ndOrder = p2
