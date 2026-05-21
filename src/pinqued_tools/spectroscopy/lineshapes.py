@@ -144,6 +144,25 @@ def _fast_lorentzian_sum(freq: NDArray,
         
     return amplitude * spectrum
 
+class Poly():
+    def __init__(self, coef):
+        self.coef = coef
+
+    def polyval(self, x):
+        """Calculates polynomial with provided coefficients for every point x
+           Note: numpy.polynomial.Polinomias has horrendous performance
+           since it rescales x to a provided window and do other unnecessary things.
+           numpu.poly1d has better performance but still about 10% slower
+        """
+        y = np.zeros_like(x)
+        y = self.coef[0]
+        for c in self.coef[1:]:
+            y = y*x + c
+        return y
+
+    def __call__(self, x):
+        return self.polyval(x)
+
 class StarkMap():
     """Do the Stark shift vs Electric field related calculation"""
     def __init__(self, Efield_reference, freq_shift_reference, maxStarkShiftMisMatch=1e-3):
