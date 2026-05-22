@@ -200,6 +200,7 @@ class StarkMap():
         self._approx_poly2ndOrder = Poly(np.polyfit(self._Efield[-3:], self._freq[-3:], 2))  # we can always make parabola on 3 points
         self._minEfild_for_poly2ndOderValidity = self._Efield[-3]
         self._approx_highOrder = None
+        self.monotonic = np.all(np.diff(self._freq) <= 0)  # is stark shift monotonically decreasing
 
         # let's try to extend the range where 2nd degree polynomial still fits
         Np = len(self._Efield) 
