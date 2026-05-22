@@ -151,21 +151,27 @@ def _polyval(x: np.float64, coef: NDArray) -> np.float64:
         y = y*x + coef[j]
     return y
 
+@njit(fastmath=True)
+def _polyval_arr(x: NDArray, coef: NDArray) -> NDArray:
+    y = np.zeros_like(x)
+    for i in range(x.size):
+        for j in range(coef.size):
+            y[i] = y[i]*x[i] + coef[j]
+    return y
+
 class Poly():
     def __init__(self, coef):
         self.coef = coef
 
     def polyval(self, x):
         """Calculates polynomial with provided coefficients for every point x
+           x - MUST be array!
+
            Note: numpy.polynomial.Polinomias has horrendous performance
            since it rescales x to a provided window and do other unnecessary things.
-           numpu.poly1d has better performance but still about 10% slower
+           numpu.poly1d has better performance but still about factor of 2 slower
         """
-        y = np.zeros_like(x)
-        y = self.coef[0]
-        for c in self.coef[1:]:
-            y = y*x + c
-        return y
+        return _polyval_arr(x, self.coef)
 
     def __call__(self, x):
         return self.polyval(x)
