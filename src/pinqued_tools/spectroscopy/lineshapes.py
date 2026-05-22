@@ -163,6 +163,23 @@ class Poly():
     def __call__(self, x):
         return self.polyval(x)
 
+@njit(fastmath=True)
+def _polyval(x: np.float64, coef: NDArray) -> np.float64:
+    y = 0
+    for j in range(coef.size):
+        y = y*x + coef[j]
+    return y
+
+@njit(fastmath=True)  # note somehow parallel=True options make it factor of 10 slower
+def ifleq_polyval(x: NDArray, limit: float, coef_leq: NDArray, coef_gt: NDArray) -> NDArray:
+    y = np.zeros(x.size, dtype = np.float64)
+    for i in range(x.size):
+        if x[i] <= limit:
+            y[i] = _polyval(x[i], coef_leq)
+        else:
+            y[i] = _polyval(x[i], coef_gt)
+    return y
+
 class StarkMap():
     """Do the Stark shift vs Electric field related calculation"""
     def __init__(self, Efield_reference, freq_shift_reference, maxStarkShiftMisMatch=1e-3):
@@ -197,7 +214,7 @@ class StarkMap():
         maxTestOrder = min(20, Np)
         while(porder <= maxTestOrder):
             porder += 1
-            phigh = np.poly1d(np.polyfit(self._Efield, self._freq, porder))
+            phigh = Poly(np.polyfit(self._Efield, self._freq, porder))
             if np.abs(phigh(self._Efield) - self._freq).max() < self._maxStarkShiftMisMatch:
                 print(f"Tabulated Stark map can be fitted with {porder} degree polynomial")
                 print(f"Note that in #of points in the linear interpolator about 400,\n     linear interpolation is faster than even 2th order polynomial")
@@ -205,26 +222,9 @@ class StarkMap():
                 break
 
 
-    def Efield2freq(self, Efield, checkValidity=True):
+    def Efield2freq(self, Efield: NDArray):
         """Return Stark shifts array vs provided Electric field array"""
-        f = np.zeros_like(Efield)
-        if checkValidity:
-            # For thousands points assertions add about 1uS (about 10% of total time)
-            assert np.all(Efield >= 0)
-
-        valid_for_poly2 = Efield > self._minEfild_for_poly2ndOderValidity
-        if np.any(valid_for_poly2):
-            f[valid_for_poly2] = self._approx_poly2ndOrder(Efield[valid_for_poly2])
-        within_tabulated = np.logical_not(valid_for_poly2)
-        if np.any(within_tabulated):
-            # FIXME improve logic and speed
-            f[within_tabulated] = np.interp(Efield[within_tabulated], self._Efield, self._freq)
-            # f[within_tabulated] = self._approx_highOrder(Efield[within_tabulated])
-            # if self._approx_highOrder is not None:
-                # f[within_tabulated] = self._approx_highOrder(Efield[within_tabulated])
-            # else:
-                # f[within_tabulated] = np.interp(Efield[within_tabulated], self._Efield, self._freq)
-        return f
+        return ifleq_polyval(Efield, self._minEfild_for_poly2ndOderValidity, self._approx_highOrder.coef, self._approx_poly2ndOrder.coef)
 
 class HoltsmarkLine(BaseSpectralLine):
     '''
