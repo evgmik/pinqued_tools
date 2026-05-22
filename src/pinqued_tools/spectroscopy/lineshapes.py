@@ -144,6 +144,13 @@ def _fast_lorentzian_sum(freq: NDArray,
         
     return amplitude * spectrum
 
+@njit(fastmath=True)
+def _polyval(x: np.float64, coef: NDArray) -> np.float64:
+    y = 0
+    for j in range(coef.size):
+        y = y*x + coef[j]
+    return y
+
 class Poly():
     def __init__(self, coef):
         self.coef = coef
@@ -162,13 +169,6 @@ class Poly():
 
     def __call__(self, x):
         return self.polyval(x)
-
-@njit(fastmath=True)
-def _polyval(x: np.float64, coef: NDArray) -> np.float64:
-    y = 0
-    for j in range(coef.size):
-        y = y*x + coef[j]
-    return y
 
 @njit(fastmath=True)  # note somehow parallel=True options make it factor of 10 slower
 def ifleq_polyval(x: NDArray, limit: float, coef_leq: NDArray, coef_gt: NDArray) -> NDArray:
