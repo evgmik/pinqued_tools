@@ -129,8 +129,8 @@ def _fast_lorentzian_sum(freq: NDArray,
         f = freq[i]
         for j in range(shifts_flat.shape[0]):
             detuning = f - shifts_flat[j]
-            val += weights_flat[j] * gamma_half_sq / (detuning**2 + gamma_half_sq)
-        spectrum[i] = val
+            spectrum[i] += weights_flat[j] / (detuning**2 + gamma_half_sq)
+    spectrum *= gamma_half_sq
         
     # Analytical normalization over all space prevents artificial 
     # amplitude explosion when a peak shifts outside the frequency window
