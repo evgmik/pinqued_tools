@@ -5,9 +5,6 @@ Author: Mykhailo Vorobiov
 '''
 #%%
 import numpy as np
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-
 from datetime import datetime
 
 from dataclasses import dataclass, field, fields, asdict
@@ -339,6 +336,8 @@ class Calibration():
 #%%
 if __name__=='__main__':
     # ------------------  Usage example ----------------
+    import matplotlib as mpl
+    import matplotlib.pyplot as plt
     from datetime import datetime
     from pinqued_tools.analysis.plotting import set_mpl_style
     set_mpl_style()

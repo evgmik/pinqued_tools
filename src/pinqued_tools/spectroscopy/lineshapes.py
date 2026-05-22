@@ -1,7 +1,5 @@
 #%%
 import numpy as np
-import matplotlib as mpl
-import matplotlib.pyplot as plt
 
 from numpy.typing import NDArray
 
@@ -112,9 +110,6 @@ from numpy.typing import NDArray
 from scipy.interpolate import interp1d, RegularGridInterpolator, CubicSpline
 from numba import njit, prange
 
-import cupy as cp
-from cupyx.scipy.ndimage import map_coordinates
-
 # --Holtsmark lineshape --
 @njit(parallel=True, fastmath=True)
 def _fast_lorentzian_sum(freq: NDArray, 
@@ -134,8 +129,8 @@ def _fast_lorentzian_sum(freq: NDArray,
         f = freq[i]
         for j in range(shifts_flat.shape[0]):
             detuning = f - shifts_flat[j]
-            val += weights_flat[j] * gamma_half_sq / (detuning**2 + gamma_half_sq)
-        spectrum[i] = val
+            spectrum[i] += weights_flat[j] / (detuning**2 + gamma_half_sq)
+    spectrum *= gamma_half_sq
         
     # Analytical normalization over all space prevents artificial 
     # amplitude explosion when a peak shifts outside the frequency window
@@ -148,6 +143,94 @@ def _fast_lorentzian_sum(freq: NDArray,
         return amplitude * spectrum / total_area
         
     return amplitude * spectrum
+
+@njit(fastmath=True)
+def _polyval(x: np.float64, coef: NDArray) -> np.float64:
+    y = 0
+    for j in range(coef.size):
+        y = y*x + coef[j]
+    return y
+
+@njit(fastmath=True)
+def _polyval_arr(x: NDArray, coef: NDArray) -> NDArray:
+    y = np.zeros_like(x)
+    for i in range(x.size):
+        for j in range(coef.size):
+            y[i] = y[i]*x[i] + coef[j]
+    return y
+
+class Poly():
+    def __init__(self, coef):
+        self.coef = coef
+
+    def polyval(self, x):
+        """Calculates polynomial with provided coefficients for every point x
+           x - MUST be array!
+
+           Note: numpy.polynomial.Polinomias has horrendous performance
+           since it rescales x to a provided window and do other unnecessary things.
+           numpu.poly1d has better performance but still about factor of 2 slower
+        """
+        return _polyval_arr(x, self.coef)
+
+    def __call__(self, x):
+        return self.polyval(x)
+
+@njit(fastmath=True)  # note somehow parallel=True options make it factor of 10 slower
+def ifleq_polyval(x: NDArray, limit: float, coef_leq: NDArray, coef_gt: NDArray) -> NDArray:
+    y = np.zeros(x.size, dtype = np.float64)
+    for i in range(x.size):
+        if x[i] <= limit:
+            y[i] = _polyval(x[i], coef_leq)
+        else:
+            y[i] = _polyval(x[i], coef_gt)
+    return y
+
+class StarkMap():
+    """Do the Stark shift vs Electric field related calculation"""
+    def __init__(self, Efield_reference, freq_shift_reference, maxStarkShiftMisMatch=1e-3):
+        """Initialized with tabulated values of Stark shift vs Electric field
+        The Efield_reference must be provided in the ascending order
+        maxStarkShiftMisMatch - maximum allowed mistake by heuristic, in units of freq_shift_reference
+        """
+        self._Efield = Efield_reference.copy()  # Stark Electric field
+        self._freq = freq_shift_reference.copy()  # frequency of stark shift
+        #  Stark shift is quadratic for large enough Efield let's see if we can fit it with quadratic polynomial
+        self._maxStarkShiftMisMatch = maxStarkShiftMisMatch
+        self._approx_poly2ndOrder = Poly(np.polyfit(self._Efield[-3:], self._freq[-3:], 2))  # we can always make parabola on 3 points
+        self._minEfild_for_poly2ndOderValidity = self._Efield[-3]
+        self._approx_highOrder = None
+
+        # let's try to extend the range where 2nd degree polynomial still fits
+        Np = len(self._Efield) 
+        left_end = 0
+        while (left_end < Np-3):
+            Efmin = self._Efield[left_end]
+            valid = self._Efield > Efmin
+            p2 = Poly(np.polyfit(self._Efield[valid], self._freq[valid], 2))
+            if np.abs(p2(self._Efield[valid]) - self._freq[valid]).max() < self._maxStarkShiftMisMatch:
+                print(f"Stark map can be fitted with 2nd degree polynomial for E field > {Efmin}")
+                self._approx_poly2ndOrder = p2
+                self._minEfild_for_poly2ndOderValidity = self._Efield[left_end]
+                break
+            left_end += int(np.floor((Np - left_end)/2))
+
+        # now let's find hight order approximation within tabulated values
+        porder = 1
+        maxTestOrder = min(20, Np)
+        while(porder <= maxTestOrder):
+            porder += 1
+            phigh = Poly(np.polyfit(self._Efield, self._freq, porder))
+            if np.abs(phigh(self._Efield) - self._freq).max() < self._maxStarkShiftMisMatch:
+                print(f"Tabulated Stark map can be fitted with {porder} degree polynomial")
+                print(f"Note that in #of points in the linear interpolator about 400,\n     linear interpolation is faster than even 2th order polynomial")
+                self._approx_highOrder = phigh
+                break
+
+
+    def Efield2freq(self, Efield: NDArray):
+        """Return Stark shifts array vs provided Electric field array"""
+        return ifleq_polyval(Efield, self._minEfild_for_poly2ndOderValidity, self._approx_highOrder.coef, self._approx_poly2ndOrder.coef)
 
 class HoltsmarkLine(BaseSpectralLine):
     '''
@@ -162,20 +245,24 @@ class HoltsmarkLine(BaseSpectralLine):
         super().__init__(normalized)
 
         self.stark_interp = CubicSpline(efield_reference, stark_reference, extrapolate=False)
-        self._efield_reference = efield_reference
+        self._efield_reference = efield_reference.copy()
+        self._stark_reference= stark_reference.copy()
+        self.stark_map = StarkMap(self._efield_reference, self._stark_reference)
         
         # Safe linear extrapolation up to 10x the calibration limit.
         # This prevents the Holtsmark tail from being truncated.
         max_ref_E = efield_reference[-1]
-        self._dense_efield = np.linspace(efield_reference[0], max_ref_E * 10.0, 200000)
-        self._dense_stark = np.zeros_like(self._dense_efield)
-        
-        valid = self._dense_efield <= max_ref_E
-        self._dense_stark[valid] = self.stark_interp(self._dense_efield[valid])
-        
+        # no need to over interpolate (it makes things slow and results are the same)
+        self._dense_efield = np.zeros(len(self._efield_reference) + 1)
+        self._dense_stark = np.zeros(len(self._efield_reference) + 1)
+        self._dense_efield[:-1] = self._efield_reference[:]
+        self._dense_stark[:-1] = self._stark_reference[:]
+        self._dense_efield[-1] = self._efield_reference[-1]*10  # increase range by 10
         last_stark = self.stark_interp(max_ref_E)
         last_slope = self.stark_interp(max_ref_E, nu=1)
-        self._dense_stark[~valid] = last_stark + last_slope * (self._dense_efield[~valid] - max_ref_E)
+        # we do linear approximation at the extended range
+        # FIXME: linear approximation is BAD for large Efield, it should be quadratic!
+        self._dense_stark[-1] = last_stark + last_slope * (self._dense_efield[-1] - max_ref_E)
         
         # 1. Pre-compute Holtsmark distribution and its analytical integral C(u)
         betas = np.linspace(0, 20.0, 2000)
@@ -187,6 +274,7 @@ class HoltsmarkLine(BaseSpectralLine):
         
         # Extend analytical tail for beta > 20.0 (H(beta) -> 1.496 * beta^-2.5)
         tail_mask = self._dense_betas > 20.0
+        # FIXME: 1.496 is close but not precise, small discontinuity is visible
         self._dense_h_vals[tail_mask] = 1.496 / (self._dense_betas[tail_mask]**2.5)
 
         from scipy.integrate import cumulative_trapezoid
@@ -224,11 +312,43 @@ class HoltsmarkLine(BaseSpectralLine):
         print(f"Building 4D Lineshape Library: {len(E0_grid)}x{len(efield_grid)}x{len(width_grid)}x{len(freq_grid)} points...")
         
         library = np.zeros((len(E0_grid), len(efield_grid), len(width_grid), len(freq_grid)))
-        
-        # Use an ultra-dense Etot grid to prevent any interpolation aliasing
-        Etot_grid = np.linspace(0.0, self._dense_efield[-1], 20000)
-        dEtot = Etot_grid[1] - Etot_grid[0]
-        shifts_flat = np.interp(Etot_grid, self._dense_efield, self._dense_stark)
+
+        # let's be smart and find reasonable limits for possible E fields samples: Etot_grid
+        # there is no need to calculate spectra much beyond required freq_grid
+        fmin = freq_grid.min()
+        # points which stands more than 30 wavelength away do not contribute to a spectrum
+        fmin = fmin - 30*max(E0_grid.max(), width_grid.max())
+        # lets find which field correspond to such frequency shifts
+        if fmin > 0:
+            # FIXME take in account the case of Stark shift bending up to positive frequencies
+            print("WARNING: it is bad idea to make grid with left edge positive")
+            Emax=0
+        else:
+            # poor man equation solver
+            valid = (self._dense_stark < 0)
+            # interpolate need x in ascending order thus we put - sign below
+            # remember that DC Stark pushes down
+            Emax = np.interp(-fmin, -self._dense_stark[valid], self._dense_efield[valid])  # note x-y axis flip
+        # for the left border we just assign Emin=0 without attempt of optimization
+        Emin=0
+        assert Emin < Emax
+
+        fstep_min = max(E0_grid.min(), width_grid.min())/10  # linewidth/10 seems to be indistinguishable from a dense grid
+        # let's be smart and assign points for different spectra in frequency space
+        # this way we are not wasting CPU by doing over dense grid at low Efield
+        if np.all(self._dense_stark[1:] < 0):
+            shifts_flat = np.linspace(fmin, 0, int((-fmin)/fstep_min)+1)
+            # note we are flipping the usual stark map meaning with x-y axis flip
+            Etot_grid = np.interp(-shifts_flat, -self._dense_stark, self._dense_efield)
+            dEtot = np.zeros_like(Etot_grid)
+            dEtot[:-1] = -np.diff(Etot_grid)  # note the sign flip, since this actually used as a weight
+            dEtot[-1] = dEtot[-2]  # last step extrapolated
+        else:
+            # Stark shift is not monotonous: same frequency different E field
+            # resort to brute force
+            Etot_grid = np.linspace(Emin, Emax, 20000)
+            shifts_flat = np.interp(Etot_grid, self._dense_efield, self._dense_stark)
+            dEtot = Etot_grid[1] - Etot_grid[0]
 
         if base_model == '2d':
             for j, efield in enumerate(efield_grid):
@@ -405,7 +525,7 @@ class HoltsmarkLine(BaseSpectralLine):
         dEtot = Etot_grid[1] - Etot_grid[0]
 
         weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
-        shifts_flat = np.interp(Etot_grid, self._dense_efield, self._dense_stark)
+        shifts_flat = self.stark_map.Efield2freq(Etot_grid)
 
         return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
     
@@ -417,139 +537,10 @@ class HoltsmarkLine(BaseSpectralLine):
         return (2.0 * beta / np.pi) * result
         
 
-class HoltsmarkLineCupy(HoltsmarkLine):
-    '''
-    CuPy-accelerated Holtsmark lineshape.
-    Stores the Look-Up Table on the GPU and evaluates it using 
-    optimized `map_coordinates` to bypass SciPy's overhead.
-    '''
-    def build_lut(self, 
-                  freq_grid: NDArray, 
-                  efield_grid: NDArray, 
-                  E0_grid: NDArray, 
-                  width_grid: NDArray,
-                  base_model: str = '2d'):
-        # 1. Build CPU LUT first via the parent class
-        super().build_lut(freq_grid, efield_grid, E0_grid, width_grid, base_model)
-        
-        # 2. Extract boundaries as native floats to prevent implicit GPU-syncs during np.clip
-        self._grid_boundaries = [
-            (float(E0_grid[0]), float(E0_grid[-1])),
-            (float(efield_grid[0]), float(efield_grid[-1])),
-            (float(width_grid[0]), float(width_grid[-1])),
-            (float(freq_grid[0]), float(freq_grid[-1]))
-        ]
-        
-        # 3. Precompute properties for fast physical-to-index mapping
-        self._grid_mins_cp = cp.array([E0_grid[0], efield_grid[0], width_grid[0], freq_grid[0]])
-        self._grid_maxs_cp = cp.array([E0_grid[-1], efield_grid[-1], width_grid[-1], freq_grid[-1]])
-        self._grid_ns_cp = cp.array([len(E0_grid)-1, len(efield_grid)-1, len(width_grid)-1, len(freq_grid)-1])
-        
-        # 4. Transfer the library to the GPU
-        print("Transferring LUT to GPU...")
-        self._lut_cp = cp.asarray(self._lut_interpolator.values)
-        print("GPU Transfer Complete.")
-
-    def save_lut_hdf5(self, file_path: str, group_name: str = 'holtsmark_lut') -> None:
-        """
-        Saves the CuPy 4D Look-Up Table directly from the GPU to an HDF5 file.
-        """
-        import h5py
-        if getattr(self, '_lut_cp', None) is None:
-            raise RuntimeError("CuPy LUT not initialized. Call `build_lut()` first.")
-            
-        with h5py.File(file_path, 'a') as f:
-            # Remove the group if it already exists to overwrite it cleanly
-            if group_name in f:
-                del f[group_name]
-            group = f.create_group(group_name)
-            
-            # Fetch original grids from the base CPU interpolator if it exists
-            if getattr(self, '_lut_interpolator', None) is not None:
-                grid_E0, grid_E, grid_W, grid_f = self._lut_interpolator.grid
-            else:
-                # Reconstruct grids natively from CuPy boundaries if CPU LUT was cleared
-                bE0, bE, bW, bF = self._grid_boundaries
-                ns = self._grid_ns_cp.get()
-                grid_E0 = np.linspace(bE0[0], bE0[1], int(ns[0] + 1))
-                grid_E  = np.linspace(bE[0], bE[1], int(ns[1] + 1))
-                grid_W  = np.linspace(bW[0], bW[1], int(ns[2] + 1))
-                grid_f  = np.linspace(bF[0], bF[1], int(ns[3] + 1))
-                
-            group.create_dataset('E0_grid', data=grid_E0)
-            group.create_dataset('efield_grid', data=grid_E)
-            group.create_dataset('width_grid', data=grid_W)
-            group.create_dataset('freq_grid', data=grid_f)
-            # Transfer array from GPU to CPU to be saved by h5py
-            group.create_dataset('library', data=self._lut_cp.get(), compression='gzip', compression_opts=9)
-        print(f"CuPy LUT successfully saved to {file_path} in group '{group_name}'")
-
-    def line_lut(self, freq: NDArray, 
-                 efield: float|NDArray = 0.0, 
-                 width: float|NDArray = 20.0, 
-                 E0: float|NDArray = 3.0, 
-                 amplitude: float|NDArray = 1.0) -> NDArray:
-        if getattr(self, '_lut_cp', None) is None:
-            raise RuntimeError("CuPy LUT not initialized. Call `build_lut()` first.")
-            
-        bE0, bE, bW, bF = self._grid_boundaries
-        E0 = np.clip(E0, bE0[0], bE0[1])
-        efield = np.clip(efield, bE[0], bE[1])
-        width = np.clip(width, bW[0], bW[1])
-
-        # Move queries to GPU
-        E0_cp = cp.asarray(E0)
-        efield_cp = cp.asarray(efield)
-        width_cp = cp.asarray(width)
-        freq_cp = cp.asarray(freq)
-
-        # Convert physical values to fractional indices natively on the GPU
-        def to_idx(val, axis):
-            vmin = self._grid_mins_cp[axis]
-            vmax = self._grid_maxs_cp[axis]
-            n = self._grid_ns_cp[axis]
-            return (val - vmin) / (vmax - vmin) * n
-
-        E0_idx = to_idx(E0_cp, 0)
-        E_idx = to_idx(efield_cp, 1)
-        W_idx = to_idx(width_cp, 2)
-        f_idx = to_idx(freq_cp, 3)
-
-        # Scalar evaluation
-        if efield_cp.ndim == 0 and width_cp.ndim == 0 and E0_cp.ndim == 0:
-            coords = cp.stack([
-                cp.full_like(f_idx, E0_idx),
-                cp.full_like(f_idx, E_idx),
-                cp.full_like(f_idx, W_idx),
-                f_idx
-            ])
-            spectrum_cp = map_coordinates(self._lut_cp, coords, order=1, mode='constant', cval=0.0)
-            return np.asarray(amplitude) * spectrum_cp.get()
-            
-        # 2D Array evaluation
-        E0_b, efield_b, width_b = cp.broadcast_arrays(E0_idx, E_idx, W_idx)
-        E0_grid, freq_grid = cp.meshgrid(E0_b, f_idx, indexing='ij')
-        efield_grid, _ = cp.meshgrid(efield_b, f_idx, indexing='ij')
-        width_grid, _ = cp.meshgrid(width_b, f_idx, indexing='ij')
-        
-        coords = cp.stack([
-            E0_grid.ravel(),
-            efield_grid.ravel(),
-            width_grid.ravel(),
-            freq_grid.ravel()
-        ])
-        
-        spectrum_cp = map_coordinates(self._lut_cp, coords, order=1, mode='nearest')
-        spectrum = spectrum_cp.get().reshape(efield_grid.shape)
-        
-        if np.ndim(amplitude) > 0:
-            amplitude = np.asarray(amplitude)[:, np.newaxis]
-            
-        return amplitude * spectrum
-
 #%%
 if __name__=='__main__':
     # Apply custom plotting style
+    import matplotlib.pyplot as plt
     from pinqued_tools.analysis.plotting import set_mpl_style
     set_mpl_style()
 
