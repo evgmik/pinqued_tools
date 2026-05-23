@@ -519,15 +519,30 @@ class HoltsmarkLine(BaseSpectralLine):
         """
         Generates the lineshape using a 2D vector summation of the external 
         DC field and the isotropic Holtsmark microfield.
+
+        The freq MUST be sorted in the ascending order
         """
         E0_safe = max(E0, 1e-6)
-        E_max = min(efield + 20.0 * E0_safe, self._dense_efield[-1])
-        Etot_grid = np.linspace(0.0, max(E_max, 1e-3), 10000)
-        dEtot = Etot_grid[1] - Etot_grid[0]
+        if not self.stark_map.monotonic:
+            # worst case scenario, we cannot predict required grid
+            E_max = min(efield + 20.0 * E0_safe, self._dense_efield[-1])
+            Etot_grid = np.linspace(0.0, max(E_max, 1e-3), 10000)
+            dEtot = Etot_grid[1] - Etot_grid[0]
 
-        weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
-        shifts_flat = self.stark_map.Efield2freq(Etot_grid)
-
+            weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
+            shifts_flat = self.stark_map.Efield2freq(Etot_grid)
+        else:
+            min_freq = freq[0] - 20*width
+            max_freq = freq[-1] + 20*width
+            shifts_flat = np.linspace(min_freq, max_freq, int(np.ceil((max_freq - min_freq)/width*20)))
+            Etot_grid = self.stark_map.freq2Efield(shifts_flat)
+            dEtot = np.zeros_like(Etot_grid)
+            dEtot[:-1] = -np.diff(Etot_grid)  # assumes that f vs E is downward
+            dEtot[-1] = dEtot[-2]
+            weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
+            mask = (weights_flat != 0)
+            weights_flat = weights_flat[mask]
+            shifts_flat = shifts_flat[mask]
         return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
     
     def _integrate_holtsmark(self, beta):
