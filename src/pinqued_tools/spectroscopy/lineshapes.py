@@ -231,27 +231,28 @@ class StarkMap():
     def freq2Efield(self, freq):
         """Calculates Electric field corresponding to a given shift"""
         Ef = np.zeros_like(freq)
-        Ef[freq>=0] = 0
-        neg_freq = freq < 0
-        if np.any(neg_freq) and self.monotonic:
-            fmin = freq.min()
-            if (self._freq[-1] <= fmin):
-                # print("We are within tabulated values")
-                Ef[neg_freq] = np.interp( -freq[neg_freq], -self._freq, self._Efield)
-                return Ef
-            Ecut = 1.2*self._Efield[-1]
-            Eprobe = np.linspace(0, Ecut, 2) # has to be array
-            fprobe = self.Efield2freq(Eprobe)
-            while np.all(fprobe > fmin):
-                Ecut *= 1.2
-                Eprobe = np.linspace(0, Ecut, 2)
+        if self.monotonic:
+            neg_freq = freq < 0
+            Ef[freq>=0] = np.nan  # there are no positive shifts for monotonic Stark maps
+            if np.any(neg_freq) and self.monotonic:
+                fmin = freq.min()
+                if (self._freq[-1] <= fmin):
+                    # print("We are within tabulated values")
+                    Ef[neg_freq] = np.interp( -freq[neg_freq], -self._freq, self._Efield)
+                    return Ef
+                Ecut = 1.2*self._Efield[-1]
+                Eprobe = np.linspace(0, Ecut, 2) # has to be array
                 fprobe = self.Efield2freq(Eprobe)
-            print(f"{Ecut=}")
-            N_tab = 10000
-            E_tab = np.linspace(0, Ecut, N_tab)
-            f_tab = self.Efield2freq(E_tab)
-            Ef[neg_freq] = np.interp( -freq[neg_freq], -f_tab, E_tab)
-            return Ef
+                while np.all(fprobe > fmin):
+                    Ecut *= 1.2
+                    Eprobe = np.linspace(0, Ecut, 2)
+                    fprobe = self.Efield2freq(Eprobe)
+                print(f"{Ecut=}")
+                N_tab = 10000
+                E_tab = np.linspace(0, Ecut, N_tab)
+                f_tab = self.Efield2freq(E_tab)
+                Ef[neg_freq] = np.interp( -freq[neg_freq], -f_tab, E_tab)
+                return Ef
         else:
             raise("Cannot find Electric field for requested frequencies")
 
@@ -562,13 +563,16 @@ class HoltsmarkLine(BaseSpectralLine):
             max_freq = freq[-1] + 20*width
             shifts_flat = np.linspace(min_freq, max_freq, int(np.ceil((max_freq - min_freq)/width*20)))
             Etot_grid = self.stark_map.freq2Efield(shifts_flat)
+
+            # select only achievable Electric fields in Holtsmark distribution
+            mask = (~np.isnan(Etot_grid))
+            Etot_grid = Etot_grid[mask]
+            shifts_flat = shifts_flat[mask]
+
             dEtot = np.zeros_like(Etot_grid)
             dEtot[:-1] = -np.diff(Etot_grid)  # assumes that f vs E is downward
             dEtot[-1] = dEtot[-2]
             weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
-            mask = (weights_flat != 0)
-            weights_flat = weights_flat[mask]
-            shifts_flat = shifts_flat[mask]
         return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
     
     def _integrate_holtsmark(self, beta):
