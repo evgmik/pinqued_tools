@@ -191,7 +191,10 @@ class StarkMap():
     def __init__(self, Efield_reference, freq_shift_reference, maxStarkShiftMisMatch=1e-3):
         """Initialized with tabulated values of Stark shift vs Electric field
         The Efield_reference must be provided in the ascending order
-        maxStarkShiftMisMatch - maximum allowed mistake by heuristic, in units of freq_shift_reference
+        maxStarkShiftMisMatch - maximum allowed mistake by heuristic, in units of freq_shift_reference.
+
+        Strongly assumes that Stark shifts push to negative for large
+        Electric field values. I.e. similar to nD states.
         """
         self._Efield = Efield_reference.copy()  # Stark Electric field
         self._freq = freq_shift_reference.copy()  # frequency of stark shift
@@ -229,7 +232,11 @@ class StarkMap():
                 break
 
     def freq2Efield(self, freq):
-        """Calculates Electric field corresponding to a given shift"""
+        """Calculates Electric field corresponding to a given shift
+           
+           Strongly assumes that Stark shifts push to negative for large
+           Electric field values. I.e. similar to nD states.
+        """
         Ef = np.zeros_like(freq)
         if self.monotonic:
             neg_freq = freq < 0
