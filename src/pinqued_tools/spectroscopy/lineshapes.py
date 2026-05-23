@@ -247,7 +247,6 @@ class StarkMap():
                     Ecut *= 1.2
                     Eprobe = np.linspace(0, Ecut, 2)
                     fprobe = self.Efield2freq(Eprobe)
-                print(f"{Ecut=}")
                 N_tab = 10000
                 E_tab = np.linspace(0, Ecut, N_tab)
                 f_tab = self.Efield2freq(E_tab)
