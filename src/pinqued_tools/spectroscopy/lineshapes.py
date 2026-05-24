@@ -244,27 +244,32 @@ class StarkMap():
            Electric field values. I.e. similar to nD states.
         """
         Ef = np.zeros_like(freq)
+        reachable_freq = freq < self._max_shift_freq
+        Ef[~reachable_freq] = np.nan  # there are no Stark shifts to get there
         if self.monotonic:
-            neg_freq = freq < 0
-            Ef[freq>=0] = np.nan  # there are no positive shifts for monotonic Stark maps
-            if np.any(neg_freq) and self.monotonic:
-                fmin = freq.min()
-                if (self._freq[-1] <= fmin):
+            if np.any(reachable_freq):
+                tabulated_freq = (self._freq[-1] <= freq) & (freq <= self._max_shift_freq)
+                if np.any(tabulated_freq):
                     # print("We are within tabulated values")
-                    Ef[neg_freq] = np.interp( -freq[neg_freq], -self._freq, self._Efield)
-                    return Ef
-                Ecut = 1.2*self._Efield[-1]
-                Eprobe = np.linspace(0, Ecut, 2) # has to be array
-                fprobe = self.Efield2freq(Eprobe)
-                while np.all(fprobe > fmin):
-                    Ecut *= 1.2
-                    Eprobe = np.linspace(0, Ecut, 2)
+                    Ef[tabulated_freq] = np.interp( -freq[tabulated_freq], -self._freq, self._Efield)
+                non_tabulated_freq = reachable_freq & ~tabulated_freq
+                if np.any(non_tabulated_freq):
+                    # FIXME: we now in the 2nd degree polynomial Stark shift
+                    # FIXME: we can find E cutoff from this polynomial in one step
+                    # searching for maximum field encompassing all leftover points
+                    fmin = freq.min()
+                    Ecut = 1.2*self._Efield[-1]
+                    Eprobe = np.linspace(0, Ecut, 2) # has to be array
                     fprobe = self.Efield2freq(Eprobe)
-                N_tab = 10000
-                E_tab = np.linspace(0, Ecut, N_tab)
-                f_tab = self.Efield2freq(E_tab)
-                Ef[neg_freq] = np.interp( -freq[neg_freq], -f_tab, E_tab)
-                return Ef
+                    while np.all(fprobe > fmin):
+                        Ecut *= 1.2
+                        Eprobe = np.linspace(0, Ecut, 2)
+                        fprobe = self.Efield2freq(Eprobe)
+                    N_tab = 10000  # FIXME: do we need that many?
+                    E_tab = np.linspace(self._Efield[-1], Ecut, N_tab)
+                    f_tab = self.Efield2freq(E_tab)
+                    Ef[non_tabulated_freq] = np.interp( -freq[non_tabulated_freq], -f_tab, E_tab)
+            return Ef
         else:
             raise("Cannot find Electric field for requested frequencies")
 
