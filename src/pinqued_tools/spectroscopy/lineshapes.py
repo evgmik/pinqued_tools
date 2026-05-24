@@ -559,15 +559,20 @@ class HoltsmarkLine(BaseSpectralLine):
                efield: float = 0.0, 
                width: float = 20.0, 
                E0: float = 3.0, 
-               amplitude: float = 1.0) -> NDArray:
+               amplitude: float = 1.0,
+               bruteforce = False,
+               _branch = None) -> NDArray:
         """
         Generates the lineshape using a 2D vector summation of the external 
         DC field and the isotropic Holtsmark microfield.
 
         The freq MUST be sorted in the ascending order
+
+        _branch is used internally to select raising or falling part of Stark Map,
+                can take values None (default), "raising", and "falling"
         """
         E0_safe = max(E0, 1e-6)
-        if not self.stark_map.monotonic:
+        if bruteforce:
             # worst case scenario, we cannot predict required grid
             E_max = min(efield + 20.0 * E0_safe, self._dense_efield[-1])
             Etot_grid = np.linspace(0.0, max(E_max, 1e-3), 10000)
@@ -575,15 +580,28 @@ class HoltsmarkLine(BaseSpectralLine):
 
             weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
             shifts_flat = self.stark_map.Efield2freq(Etot_grid)
+            return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
+        if (not self.stark_map.monotonic) and (_branch is None):
+            print("non monotonic case")
+            lineshape_f = self.line2d( freq, efield, width, E0, amplitude, bruteforce, _branch = "falling")
+            lineshape_r = self.line2d( freq, efield, width, E0, amplitude, bruteforce, _branch = "raising")
+            print(lineshape_r)
+            return lineshape_r + lineshape_f
         else:
             min_freq = freq[0] - 20*width
             max_freq = freq[-1] + 20*width
             shifts_flat = np.linspace(min_freq, max_freq, int(np.ceil((max_freq - min_freq)/width*20)))
-            Etot_grid = self.stark_map.freq2Efield(shifts_flat)
+            
+            if (self.stark_map.monotonic) and (_branch is None):
+                _branch = "falling"  # for monotonic Stark Map frequency fall with Efield increase
+            Etot_grid = self.stark_map.freq2Efield(shifts_flat, branch = _branch)
 
             # select only achievable Electric fields in Holtsmark distribution
             mask = (~np.isnan(Etot_grid))
             Etot_grid = Etot_grid[mask]
+            if np.sum(mask) < 2:
+                print("not enough hits of the matching E field on our frequency grid")
+                return freq*0  # lineshape strength is zero in this case
             shifts_flat = shifts_flat[mask]
 
             dEtot = np.zeros_like(Etot_grid)
