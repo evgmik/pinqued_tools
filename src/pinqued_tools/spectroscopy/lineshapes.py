@@ -227,7 +227,6 @@ class StarkMap():
             phigh = Poly(np.polyfit(self._Efield, self._freq, porder))
             if np.abs(phigh(self._Efield) - self._freq).max() < self._maxStarkShiftMisMatch:
                 print(f"Tabulated Stark map can be fitted with {porder} degree polynomial")
-                print(f"Note that in #of points in the linear interpolator about 400,\n     linear interpolation is faster than even 2th order polynomial")
                 self._approx_highOrder = phigh
                 break
 
