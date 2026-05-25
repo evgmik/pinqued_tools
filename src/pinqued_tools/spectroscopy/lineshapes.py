@@ -598,18 +598,26 @@ class HoltsmarkLine(BaseSpectralLine):
             weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
             shifts_flat = self.stark_map.Efield2freq(Etot_grid)
             return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
+
         if (not self.stark_map.monotonic) and (_branch is None):
-            print("non monotonic case")
             lineshape_f = self.line2d( freq, efield, width, E0, amplitude, bruteforce, _branch = "falling")
             lineshape_r = self.line2d( freq, efield, width, E0, amplitude, bruteforce, _branch = "raising")
             return lineshape_r + lineshape_f
         else:
-            min_freq = freq[0] - 20*width
-            max_freq = freq[-1] + 20*width
-            shifts_flat = np.linspace(min_freq, max_freq, int(np.ceil((max_freq - min_freq)/width*20)))
-            
             if (self.stark_map.monotonic) and (_branch is None):
                 _branch = "falling"  # for monotonic Stark Map frequency fall with Efield increase
+            min_freq = freq[0] - 20*width
+            max_freq = freq[-1] + 20*width
+            
+            # limit tested frequency to reachable by StarkMap
+            max_freq = min(max_freq, self.stark_map._max_shift_freq)
+            if _branch == "raising":
+                min_freq = max(self.stark_map._freq[0], min_freq)
+            if min_freq >= max_freq:
+                # we are really testing for min_freq == max_freq, no candidates to test
+                return freq*0  # lineshape strength is zero in this case
+
+            shifts_flat = np.linspace(min_freq, max_freq, max(100, int(np.ceil((max_freq - min_freq)/width*20))))
             Etot_grid = self.stark_map.freq2Efield(shifts_flat, branch = _branch)
 
             # select only achievable Electric fields in Holtsmark distribution
@@ -621,9 +629,9 @@ class HoltsmarkLine(BaseSpectralLine):
             shifts_flat = shifts_flat[mask]
 
             dEtot = np.zeros_like(Etot_grid)
-            dEtot[:-1] = -np.diff(Etot_grid)  # assumes that f vs E is downward
+            dEtot[:-1] = np.diff(Etot_grid)  # assumes that f vs E is downward
             dEtot[-1] = dEtot[-2]
-            weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
+            weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * np.abs(dEtot)
         return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
     
     def _integrate_holtsmark(self, beta):
