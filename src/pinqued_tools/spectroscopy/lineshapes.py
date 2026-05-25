@@ -252,20 +252,24 @@ class StarkMap():
         if branch == "falling":
             reachable_freq = freq <= self._max_shift_freq
         if branch == "raising":
-            reachable_freq = (self._freq[0] <= freq) & (freq < self._max_shift_freq)
+            reachable_freq = (self._freq[0] <= freq) & (freq <= self._max_shift_freq)
         if not np.any(reachable_freq):
             return Ef
         if branch == "falling":
             tab_mask = self._Efield >= self._max_shift_Efield
         else:  # raising branch
-            tab_mask = self._Efield < self._max_shift_Efield
+            tab_mask = self._Efield <= self._max_shift_Efield
         tabulated_freq = (self._freq[-1] <= freq) & (freq <= self._max_shift_freq)
         valid = tabulated_freq & reachable_freq
         if np.any(valid):
             # print("We are within tabulated values")
-            tab_mask = self._Efield >= self._max_shift_Efield
-            Ef[valid] = np.interp( -freq[valid], -self._freq[tab_mask], self._Efield[tab_mask])
-
+            if branch == "falling":
+                tab_mask = self._Efield >= self._max_shift_Efield
+                Ef[valid] = np.interp( -freq[valid], -self._freq[tab_mask], self._Efield[tab_mask])
+            else:
+                assert branch == "raising"
+                tab_mask = self._Efield <= self._max_shift_Efield
+                Ef[valid] = np.interp( freq[valid], self._freq[tab_mask], self._Efield[tab_mask])
         non_tabulated_freq = reachable_freq & ~tabulated_freq
         if np.any(non_tabulated_freq):
             assert branch == "falling"  # raising branch should not be beyond tabulated
@@ -598,7 +602,6 @@ class HoltsmarkLine(BaseSpectralLine):
             print("non monotonic case")
             lineshape_f = self.line2d( freq, efield, width, E0, amplitude, bruteforce, _branch = "falling")
             lineshape_r = self.line2d( freq, efield, width, E0, amplitude, bruteforce, _branch = "raising")
-            print(lineshape_r)
             return lineshape_r + lineshape_f
         else:
             min_freq = freq[0] - 20*width
