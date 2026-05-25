@@ -370,66 +370,27 @@ class HoltsmarkLine(BaseSpectralLine):
                   base_model: str = '2d'):
         """
         Pre-calculates a 4D Lineshape Library (E0, efield, width, freq) for instant fitting.
+
+        Available models:
+         - '2d' - for smart/quick lineshape calculations (2d is bad name, should be 'smart'
+         - 'bruteforce' - oversampled case usually slower
         """
         print(f"Building 4D Lineshape Library: {len(E0_grid)}x{len(efield_grid)}x{len(width_grid)}x{len(freq_grid)} points...")
         
         library = np.zeros((len(E0_grid), len(efield_grid), len(width_grid), len(freq_grid)))
 
-        # let's be smart and find reasonable limits for possible E fields samples: Etot_grid
-        # there is no need to calculate spectra much beyond required freq_grid
-        fmin = freq_grid.min()
-        # points which stands more than 30 wavelength away do not contribute to a spectrum
-        fmin = fmin - 30*max(E0_grid.max(), width_grid.max())
-        # lets find which field correspond to such frequency shifts
-        if fmin > 0:
-            # FIXME take in account the case of Stark shift bending up to positive frequencies
-            print("WARNING: it is bad idea to make grid with left edge positive")
-            Emax=0
-        else:
-            # poor man equation solver
-            valid = (self._dense_stark < 0)
-            # interpolate need x in ascending order thus we put - sign below
-            # remember that DC Stark pushes down
-            Emax = np.interp(-fmin, -self._dense_stark[valid], self._dense_efield[valid])  # note x-y axis flip
-        # for the left border we just assign Emin=0 without attempt of optimization
-        Emin=0
-        assert Emin < Emax
-
-        fstep_min = max(E0_grid.min(), width_grid.min())/10  # linewidth/10 seems to be indistinguishable from a dense grid
-        # let's be smart and assign points for different spectra in frequency space
-        # this way we are not wasting CPU by doing over dense grid at low Efield
-        if np.all(self._dense_stark[1:] < 0):
-            shifts_flat = np.linspace(fmin, 0, int((-fmin)/fstep_min)+1)
-            # note we are flipping the usual stark map meaning with x-y axis flip
-            Etot_grid = np.interp(-shifts_flat, -self._dense_stark, self._dense_efield)
-            dEtot = np.zeros_like(Etot_grid)
-            dEtot[:-1] = -np.diff(Etot_grid)  # note the sign flip, since this actually used as a weight
-            dEtot[-1] = dEtot[-2]  # last step extrapolated
-        else:
-            # Stark shift is not monotonous: same frequency different E field
-            # resort to brute force
-            Etot_grid = np.linspace(Emin, Emax, 20000)
-            shifts_flat = np.interp(Etot_grid, self._dense_efield, self._dense_stark)
-            dEtot = Etot_grid[1] - Etot_grid[0]
-
         if base_model == '2d':
             for j, efield in enumerate(efield_grid):
                 for i, E0 in enumerate(E0_grid):
-                    weights_flat = self._get_P_Etot(Etot_grid, efield, E0) * dEtot
-                    
                     for k, width in enumerate(width_grid): 
-                        library[i, j, k, :] = _fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
-        else:
+                        library[i, j, k, :] = self.line2d(freq_grid, efield, width, E0, 1.0)
+        elif base_model == "bruteforce":
             for j, efield in enumerate(efield_grid):
                 for i, E0 in enumerate(E0_grid):
-                    E_m = Etot_grid - efield
-                    valid_mask = E_m >= 0
-                    betas = E_m / max(E0, 1e-6)
-                    H_vals = np.interp(betas, self._dense_betas, self._dense_h_vals, left=0.0, right=0.0)
-                    weights_flat = (1.0 / max(E0, 1e-6)) * H_vals * dEtot * valid_mask
-                    
-                    for k, width in enumerate(width_grid):
-                        library[i, j, k, :] = _fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
+                    for k, width in enumerate(width_grid): 
+                        library[i, j, k, :] = self.line2d(freq_grid, efield, width, E0, 1.0, bruteforce=True)
+        else:
+            raise ValueError(f"Build lut with {base_model=} is not implemented")
                 
         # 3. Create the 4-Dimensional Interpolator
         self._lut_interpolator = RegularGridInterpolator(
@@ -629,9 +590,9 @@ class HoltsmarkLine(BaseSpectralLine):
             shifts_flat = shifts_flat[mask]
 
             dEtot = np.zeros_like(Etot_grid)
-            dEtot[:-1] = np.diff(Etot_grid)  # assumes that f vs E is downward
-            dEtot[-1] = dEtot[-2]
-            weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * np.abs(dEtot)
+            dEtot[:-1] = np.abs(np.diff(Etot_grid))  # protect against falling branch case
+            dEtot[-1] = 0  # FIXME need better estimate of dE on edges
+            weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
         return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
     
     def _integrate_holtsmark(self, beta):
