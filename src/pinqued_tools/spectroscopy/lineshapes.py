@@ -591,7 +591,11 @@ class HoltsmarkLine(BaseSpectralLine):
 
             dEtot = np.zeros_like(Etot_grid)
             dEtot[:-1] = np.abs(np.diff(Etot_grid))  # protect against falling branch case
-            dEtot[-1] = 0  # FIXME need better estimate of dE on edges
+            # trapezoid dE approximation since we are doing integral and dE is not even
+            dEtot[-1] = 0
+            dEtot[1:] += dEtot[:-1]
+            dEtot /= 2
+
             weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
         return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
     
