@@ -292,7 +292,11 @@ class StarkMap():
 
     def Efield2freq(self, Efield: NDArray):
         """Return Stark shifts array vs provided Electric field array"""
-        return ifleq_polyval(Efield, self._minEfild_for_poly2ndOderValidity, self._approx_highOrder.coef, self._approx_poly2ndOrder.coef)
+        f = np.empty_like(Efield)
+        valid = Efield >= 0  # Efield is provided as magnitude, so negative numbers are illegal
+        f[~valid] = np.nan
+        f[valid] = ifleq_polyval(Efield[valid], self._minEfild_for_poly2ndOderValidity, self._approx_highOrder.coef, self._approx_poly2ndOrder.coef)
+        return f
 
 class HoltsmarkLine(BaseSpectralLine):
     '''
@@ -348,19 +352,25 @@ class HoltsmarkLine(BaseSpectralLine):
 
     def _get_P_Etot(self, Etot_grid: NDArray, efield: float, E0: float) -> NDArray:
         """Exact analytical 1D projection of the 2D macroscopic + microfield sum."""
+        assert efield >= 0
+        assert E0 >= 0
+        prob = np.empty_like(Etot_grid)
+        valid = Etot_grid >= 0  # this E field magnitude distribution
+        prob[~valid] = np.nan
         E0 = max(E0, 1e-6)
         if efield < 1e-6:
             betas = Etot_grid / E0
-            H_vals = np.interp(betas, self._dense_betas, self._dense_h_vals, left=0.0, right=0.0)
-            return (1.0 / E0) * H_vals
+            prob[valid] = np.interp(betas[valid], self._dense_betas, self._dense_h_vals, left=0.0, right=0.0)
+            return (1.0 / E0) * prob
 
-        u_max = (Etot_grid + efield) / E0
-        u_min = np.abs(Etot_grid - efield) / E0
+        u_max = (Etot_grid[valid] + efield) / E0
+        u_min = np.abs(Etot_grid[valid] - efield) / E0
 
         C_max = np.interp(u_max, self._dense_betas, self._C_u_vals, left=0.0, right=self._C_u_vals[-1])
         C_min = np.interp(u_min, self._dense_betas, self._C_u_vals, left=0.0, right=self._C_u_vals[-1])
 
-        return (Etot_grid / (2.0 * efield * E0)) * (C_max - C_min)
+        prob[valid] = (Etot_grid[valid] / (2.0 * efield * E0)) * (C_max - C_min)
+        return prob
 
     def build_lut(self, 
                   freq_grid: NDArray, 
@@ -549,6 +559,8 @@ class HoltsmarkLine(BaseSpectralLine):
         _branch is used internally to select raising or falling part of Stark Map,
                 can take values None (default), "raising", and "falling"
         """
+        # FIXME: for small E0 values p(E) looks like delta function
+        # and we might miss the peak during sampling
         E0_safe = max(E0, 1e-6)
         if bruteforce:
             # worst case scenario, we cannot predict required grid
@@ -591,7 +603,11 @@ class HoltsmarkLine(BaseSpectralLine):
 
             dEtot = np.zeros_like(Etot_grid)
             dEtot[:-1] = np.abs(np.diff(Etot_grid))  # protect against falling branch case
-            dEtot[-1] = 0  # FIXME need better estimate of dE on edges
+            # trapezoid dE approximation since we are doing integral and dE is not even
+            dEtot[-1] = 0
+            dEtot[1:] += dEtot[:-1]
+            dEtot /= 2
+
             weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
         return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
     
