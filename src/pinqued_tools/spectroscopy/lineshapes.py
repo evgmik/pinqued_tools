@@ -191,7 +191,10 @@ class StarkMap():
     def __init__(self, Efield_reference, freq_shift_reference, maxStarkShiftMisMatch=1e-3):
         """Initialized with tabulated values of Stark shift vs Electric field
         The Efield_reference must be provided in the ascending order
-        maxStarkShiftMisMatch - maximum allowed mistake by heuristic, in units of freq_shift_reference
+        maxStarkShiftMisMatch - maximum allowed mistake by heuristic, in units of freq_shift_reference.
+
+        Strongly assumes that Stark shifts push to negative for large
+        Electric field values. I.e. similar to nD states.
         """
         self._Efield = Efield_reference.copy()  # Stark Electric field
         self._freq = freq_shift_reference.copy()  # frequency of stark shift
@@ -200,6 +203,14 @@ class StarkMap():
         self._approx_poly2ndOrder = Poly(np.polyfit(self._Efield[-3:], self._freq[-3:], 2))  # we can always make parabola on 3 points
         self._minEfild_for_poly2ndOderValidity = self._Efield[-3]
         self._approx_highOrder = None
+
+        self._max_shift_indx = self._freq.argmax()
+        self._max_shift_freq = self._freq[self._max_shift_indx]
+        self._max_shift_Efield = self._Efield[self._max_shift_indx]
+
+        self.monotonic = np.all(np.diff(self._freq) <= 0)  # is stark shift monotonically decreasing
+        if not self.monotonic:
+            print("The Stark shift are not monotonic, will split in two monotonic regions")
 
         # let's try to extend the range where 2nd degree polynomial still fits
         Np = len(self._Efield) 
@@ -223,10 +234,61 @@ class StarkMap():
             phigh = Poly(np.polyfit(self._Efield, self._freq, porder))
             if np.abs(phigh(self._Efield) - self._freq).max() < self._maxStarkShiftMisMatch:
                 print(f"Tabulated Stark map can be fitted with {porder} degree polynomial")
-                print(f"Note that in #of points in the linear interpolator about 400,\n     linear interpolation is faster than even 2th order polynomial")
                 self._approx_highOrder = phigh
                 break
 
+    def freq2Efield(self, freq, branch="falling"):
+        """Calculates Electric field corresponding to a given shift
+           
+           Strongly assumes that Stark shifts push to negative for large
+           Electric field values. I.e. similar to nD states.
+
+           branch is used to chose are we working on "raising" or "falling" brunch
+           of the Stark map. Note: that for monotonic StarkMap only "falling" makes sense
+        """
+        Ef = np.empty_like(freq)
+        Ef[:] = np.nan
+        # are there Stark shifts to get such frequencies
+        if branch == "falling":
+            reachable_freq = freq <= self._max_shift_freq
+        if branch == "raising":
+            reachable_freq = (self._freq[0] <= freq) & (freq <= self._max_shift_freq)
+        if not np.any(reachable_freq):
+            return Ef
+        if branch == "falling":
+            tab_mask = self._Efield >= self._max_shift_Efield
+        else:  # raising branch
+            tab_mask = self._Efield <= self._max_shift_Efield
+        tabulated_freq = (self._freq[-1] <= freq) & (freq <= self._max_shift_freq)
+        valid = tabulated_freq & reachable_freq
+        if np.any(valid):
+            # print("We are within tabulated values")
+            if branch == "falling":
+                tab_mask = self._Efield >= self._max_shift_Efield
+                Ef[valid] = np.interp( -freq[valid], -self._freq[tab_mask], self._Efield[tab_mask])
+            else:
+                assert branch == "raising"
+                tab_mask = self._Efield <= self._max_shift_Efield
+                Ef[valid] = np.interp( freq[valid], self._freq[tab_mask], self._Efield[tab_mask])
+        non_tabulated_freq = reachable_freq & ~tabulated_freq
+        if np.any(non_tabulated_freq):
+            assert branch == "falling"  # raising branch should not be beyond tabulated
+            # FIXME: we now in the 2nd degree polynomial Stark shift
+            # FIXME: we can find E cutoff from this polynomial in one step
+            # searching for maximum field encompassing all leftover points
+            fmin = freq.min()
+            Ecut = 1.2*self._Efield[-1]
+            Eprobe = np.linspace(0, Ecut, 2) # has to be array
+            fprobe = self.Efield2freq(Eprobe)
+            while np.all(fprobe > fmin):
+                Ecut *= 1.2
+                Eprobe = np.linspace(0, Ecut, 2)
+                fprobe = self.Efield2freq(Eprobe)
+            N_tab = 10000  # FIXME: do we need that many?
+            E_tab = np.linspace(self._Efield[-1], Ecut, N_tab)
+            f_tab = self.Efield2freq(E_tab)
+            Ef[non_tabulated_freq] = np.interp( -freq[non_tabulated_freq], -f_tab, E_tab)
+        return Ef
 
     def Efield2freq(self, Efield: NDArray):
         """Return Stark shifts array vs provided Electric field array"""
@@ -308,66 +370,27 @@ class HoltsmarkLine(BaseSpectralLine):
                   base_model: str = '2d'):
         """
         Pre-calculates a 4D Lineshape Library (E0, efield, width, freq) for instant fitting.
+
+        Available models:
+         - '2d' - for smart/quick lineshape calculations (2d is bad name, should be 'smart'
+         - 'bruteforce' - oversampled case usually slower
         """
         print(f"Building 4D Lineshape Library: {len(E0_grid)}x{len(efield_grid)}x{len(width_grid)}x{len(freq_grid)} points...")
         
         library = np.zeros((len(E0_grid), len(efield_grid), len(width_grid), len(freq_grid)))
 
-        # let's be smart and find reasonable limits for possible E fields samples: Etot_grid
-        # there is no need to calculate spectra much beyond required freq_grid
-        fmin = freq_grid.min()
-        # points which stands more than 30 wavelength away do not contribute to a spectrum
-        fmin = fmin - 30*max(E0_grid.max(), width_grid.max())
-        # lets find which field correspond to such frequency shifts
-        if fmin > 0:
-            # FIXME take in account the case of Stark shift bending up to positive frequencies
-            print("WARNING: it is bad idea to make grid with left edge positive")
-            Emax=0
-        else:
-            # poor man equation solver
-            valid = (self._dense_stark < 0)
-            # interpolate need x in ascending order thus we put - sign below
-            # remember that DC Stark pushes down
-            Emax = np.interp(-fmin, -self._dense_stark[valid], self._dense_efield[valid])  # note x-y axis flip
-        # for the left border we just assign Emin=0 without attempt of optimization
-        Emin=0
-        assert Emin < Emax
-
-        fstep_min = max(E0_grid.min(), width_grid.min())/10  # linewidth/10 seems to be indistinguishable from a dense grid
-        # let's be smart and assign points for different spectra in frequency space
-        # this way we are not wasting CPU by doing over dense grid at low Efield
-        if np.all(self._dense_stark[1:] < 0):
-            shifts_flat = np.linspace(fmin, 0, int((-fmin)/fstep_min)+1)
-            # note we are flipping the usual stark map meaning with x-y axis flip
-            Etot_grid = np.interp(-shifts_flat, -self._dense_stark, self._dense_efield)
-            dEtot = np.zeros_like(Etot_grid)
-            dEtot[:-1] = -np.diff(Etot_grid)  # note the sign flip, since this actually used as a weight
-            dEtot[-1] = dEtot[-2]  # last step extrapolated
-        else:
-            # Stark shift is not monotonous: same frequency different E field
-            # resort to brute force
-            Etot_grid = np.linspace(Emin, Emax, 20000)
-            shifts_flat = np.interp(Etot_grid, self._dense_efield, self._dense_stark)
-            dEtot = Etot_grid[1] - Etot_grid[0]
-
         if base_model == '2d':
             for j, efield in enumerate(efield_grid):
                 for i, E0 in enumerate(E0_grid):
-                    weights_flat = self._get_P_Etot(Etot_grid, efield, E0) * dEtot
-                    
                     for k, width in enumerate(width_grid): 
-                        library[i, j, k, :] = _fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
-        else:
+                        library[i, j, k, :] = self.line2d(freq_grid, efield, width, E0, 1.0)
+        elif base_model == "bruteforce":
             for j, efield in enumerate(efield_grid):
                 for i, E0 in enumerate(E0_grid):
-                    E_m = Etot_grid - efield
-                    valid_mask = E_m >= 0
-                    betas = E_m / max(E0, 1e-6)
-                    H_vals = np.interp(betas, self._dense_betas, self._dense_h_vals, left=0.0, right=0.0)
-                    weights_flat = (1.0 / max(E0, 1e-6)) * H_vals * dEtot * valid_mask
-                    
-                    for k, width in enumerate(width_grid):
-                        library[i, j, k, :] = _fast_lorentzian_sum(freq_grid, shifts_flat, weights_flat, width, 1.0)
+                    for k, width in enumerate(width_grid): 
+                        library[i, j, k, :] = self.line2d(freq_grid, efield, width, E0, 1.0, bruteforce=True)
+        else:
+            raise ValueError(f"Build lut with {base_model=} is not implemented")
                 
         # 3. Create the 4-Dimensional Interpolator
         self._lut_interpolator = RegularGridInterpolator(
@@ -514,19 +537,62 @@ class HoltsmarkLine(BaseSpectralLine):
                efield: float = 0.0, 
                width: float = 20.0, 
                E0: float = 3.0, 
-               amplitude: float = 1.0) -> NDArray:
+               amplitude: float = 1.0,
+               bruteforce = False,
+               _branch = None) -> NDArray:
         """
         Generates the lineshape using a 2D vector summation of the external 
         DC field and the isotropic Holtsmark microfield.
+
+        The freq MUST be sorted in the ascending order
+
+        _branch is used internally to select raising or falling part of Stark Map,
+                can take values None (default), "raising", and "falling"
         """
         E0_safe = max(E0, 1e-6)
-        E_max = min(efield + 20.0 * E0_safe, self._dense_efield[-1])
-        Etot_grid = np.linspace(0.0, max(E_max, 1e-3), 10000)
-        dEtot = Etot_grid[1] - Etot_grid[0]
+        if bruteforce:
+            # worst case scenario, we cannot predict required grid
+            E_max = min(efield + 20.0 * E0_safe, self._dense_efield[-1])
+            Etot_grid = np.linspace(0.0, max(E_max, 1e-3), 10000)
+            dEtot = Etot_grid[1] - Etot_grid[0]
 
-        weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
-        shifts_flat = self.stark_map.Efield2freq(Etot_grid)
+            weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
+            shifts_flat = self.stark_map.Efield2freq(Etot_grid)
+            return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
 
+        if (not self.stark_map.monotonic) and (_branch is None):
+            lineshape_f = self.line2d( freq, efield, width, E0, amplitude, bruteforce, _branch = "falling")
+            lineshape_r = self.line2d( freq, efield, width, E0, amplitude, bruteforce, _branch = "raising")
+            return lineshape_r + lineshape_f
+        else:
+            if (self.stark_map.monotonic) and (_branch is None):
+                _branch = "falling"  # for monotonic Stark Map frequency fall with Efield increase
+            min_freq = freq[0] - 20*width
+            max_freq = freq[-1] + 20*width
+            
+            # limit tested frequency to reachable by StarkMap
+            max_freq = min(max_freq, self.stark_map._max_shift_freq)
+            if _branch == "raising":
+                min_freq = max(self.stark_map._freq[0], min_freq)
+            if min_freq >= max_freq:
+                # we are really testing for min_freq == max_freq, no candidates to test
+                return freq*0  # lineshape strength is zero in this case
+
+            shifts_flat = np.linspace(min_freq, max_freq, max(100, int(np.ceil((max_freq - min_freq)/width*20))))
+            Etot_grid = self.stark_map.freq2Efield(shifts_flat, branch = _branch)
+
+            # select only achievable Electric fields in Holtsmark distribution
+            mask = (~np.isnan(Etot_grid))
+            Etot_grid = Etot_grid[mask]
+            if np.sum(mask) < 2:
+                print("not enough hits of the matching E field on our frequency grid")
+                return freq*0  # lineshape strength is zero in this case
+            shifts_flat = shifts_flat[mask]
+
+            dEtot = np.zeros_like(Etot_grid)
+            dEtot[:-1] = np.abs(np.diff(Etot_grid))  # protect against falling branch case
+            dEtot[-1] = 0  # FIXME need better estimate of dE on edges
+            weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
         return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
     
     def _integrate_holtsmark(self, beta):
