@@ -16,7 +16,7 @@ import pandas as pd
 from lmfit import minimize, Parameters, fit_report
 
 from pinqued_tools.spectroscopy.spectrum import SpectralData, Axes0D
-from pinqued_tools.spectroscopy.lineshapes import HoltsmarkLine, HoltsmarkLineCupy
+from pinqued_tools.spectroscopy.lineshapes import HoltsmarkLine
 from pinqued_tools.spectroscopy.field_reference import FieldReference
 
 class SignalSimulator():
@@ -149,7 +149,6 @@ class SignalSimulator():
         bg = self.bg_drifts(f_shifted, params, poly_terms=poly_terms)
         return signal + bg
     
-
 class GPPoissonSignalSimulator1D(SignalSimulator):
     def __init__(self, 
                  reference: FieldReference,
@@ -231,6 +230,58 @@ class GPPoissonSignalSimulator1D(SignalSimulator):
         poly = np.poly1d(coefs)
         
         return signal + poly(freq)
+    
+class GPPoissonSignalSimulator1D_widthGrid(GPPoissonSignalSimulator1D):
+    def __init__(self, 
+                 reference: FieldReference,
+                 px_size: float,
+                 lineshape_func: Callable|None = None
+                 ):
+        super().__init__(reference, lineshape_func)
+        self.px_size = px_size
+        
+
+    def holtsmark_spectrum(self, 
+                           freq: NDArray, 
+                           params: Parameters,
+                           efield: float|NDArray|None = None,
+                           grad_vec: float|NDArray|None = None,
+                           E0: float|NDArray|None = None,
+                           amp: float|NDArray|None = None,
+                           n_subsamples: int = 3
+                           ) -> NDArray:
+        '''
+        Simulate EIT signal for a given electric field using the Holtsmark lineshape.
+        Uses spatially varying width array constructed from width_weight{i} parameters.
+        '''
+        scale_factor = params['amp'].value if amp is None else amp
+
+        # Handle 1D (spatial) evaluation
+        if efield is not None and np.ndim(efield) > 0:
+            nx = len(efield)
+            spectrum = np.zeros((nx, len(freq)))
+            width = np.array([params[f'width_weight{i}'].value for i in range(nx)])
+        else:
+            spectrum = np.zeros_like(freq, dtype=np.float64)
+            width = params['width_weight0'].value if 'width_weight0' in params else params['width'].value
+
+        r_amp = [params[f'rel_amp_{i}'].value for i in range(len(self._hline_list))]
+        
+        for i, (hline, ai) in enumerate(zip(self._hline_list, r_amp)):
+            if n_subsamples > 1:
+                hline_smeared = 0.0
+                # Distribute subsamples evenly across the pixel from -0.5 to 0.5
+                offsets = np.linspace(-0.5, 0.5, n_subsamples)
+                for offset in offsets:
+                    # Ensure absolute efield to prevent negative LUT queries
+                    efield_smear = np.abs(efield + grad_vec * self.px_size * offset)
+                    hline_smeared += hline(freq, efield=efield_smear, width=width, E0=E0, amplitude=ai, model='lut')
+                hline_smeared /= n_subsamples
+            else:
+                hline_smeared = hline(freq, efield=np.abs(efield), width=width, E0=E0, amplitude=ai, model='lut')
+            spectrum += hline_smeared 
+        spectrum *= scale_factor
+        return spectrum
 
 #%%
 if __name__=='__main__':
