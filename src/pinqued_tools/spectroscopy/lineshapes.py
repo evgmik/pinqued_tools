@@ -292,7 +292,11 @@ class StarkMap():
 
     def Efield2freq(self, Efield: NDArray):
         """Return Stark shifts array vs provided Electric field array"""
-        return ifleq_polyval(Efield, self._minEfild_for_poly2ndOderValidity, self._approx_highOrder.coef, self._approx_poly2ndOrder.coef)
+        f = np.empty_like(Efield)
+        valid = Efield >= 0  # Efield is provided as magnitude, so negative numbers are illegal
+        f[~valid] = np.nan
+        f[valid] = ifleq_polyval(Efield[valid], self._minEfild_for_poly2ndOderValidity, self._approx_highOrder.coef, self._approx_poly2ndOrder.coef)
+        return f
 
 class HoltsmarkLine(BaseSpectralLine):
     '''
