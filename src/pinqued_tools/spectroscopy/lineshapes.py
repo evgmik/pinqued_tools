@@ -559,6 +559,8 @@ class HoltsmarkLine(BaseSpectralLine):
         _branch is used internally to select raising or falling part of Stark Map,
                 can take values None (default), "raising", and "falling"
         """
+        # FIXME: for small E0 values p(E) looks like delta function
+        # and we might miss the peak during sampling
         E0_safe = max(E0, 1e-6)
         if bruteforce:
             # worst case scenario, we cannot predict required grid
