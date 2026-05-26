@@ -352,19 +352,25 @@ class HoltsmarkLine(BaseSpectralLine):
 
     def _get_P_Etot(self, Etot_grid: NDArray, efield: float, E0: float) -> NDArray:
         """Exact analytical 1D projection of the 2D macroscopic + microfield sum."""
+        assert efield >= 0
+        assert E0 >= 0
+        prob = np.empty_like(Etot_grid)
+        valid = Etot_grid >= 0  # this E field magnitude distribution
+        prob[~valid] = np.nan
         E0 = max(E0, 1e-6)
         if efield < 1e-6:
             betas = Etot_grid / E0
-            H_vals = np.interp(betas, self._dense_betas, self._dense_h_vals, left=0.0, right=0.0)
-            return (1.0 / E0) * H_vals
+            prob[valid] = np.interp(betas[valid], self._dense_betas, self._dense_h_vals, left=0.0, right=0.0)
+            return (1.0 / E0) * prob
 
-        u_max = (Etot_grid + efield) / E0
-        u_min = np.abs(Etot_grid - efield) / E0
+        u_max = (Etot_grid[valid] + efield) / E0
+        u_min = np.abs(Etot_grid[valid] - efield) / E0
 
         C_max = np.interp(u_max, self._dense_betas, self._C_u_vals, left=0.0, right=self._C_u_vals[-1])
         C_min = np.interp(u_min, self._dense_betas, self._C_u_vals, left=0.0, right=self._C_u_vals[-1])
 
-        return (Etot_grid / (2.0 * efield * E0)) * (C_max - C_min)
+        prob[valid] = (Etot_grid[valid] / (2.0 * efield * E0)) * (C_max - C_min)
+        return prob
 
     def build_lut(self, 
                   freq_grid: NDArray, 
