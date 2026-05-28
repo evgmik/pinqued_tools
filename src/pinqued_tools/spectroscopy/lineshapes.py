@@ -464,6 +464,9 @@ class HoltsmarkLine(BaseSpectralLine):
         """
         Instant lineshape extraction from the pre-computed 4D Look-Up Table.
         Supports scalar inputs or 1D arrays for spatial variations.
+
+        If 1D arrays submitted for Efield, width, or E0 then this arrays are brodcasted to each other
+        and result is 2D array with sets of spectra linked to counter of (Efield, width, E0) list
         """
         if self._lut_interpolator is None:
             raise RuntimeError("LUT not initialized. Call `build_lut()` before using model='lut'.")
@@ -493,24 +496,22 @@ class HoltsmarkLine(BaseSpectralLine):
             
         # Array parameters (spatial grid): return 2D array (spatial x frequency)
         # Safely broadcast arrays before meshing
-        E0_b, efield_b, width_b = np.broadcast_arrays(E0, efield, width)
-        E0_grid, freq_grid = np.meshgrid(E0_b, freq, indexing='ij')
-        efield_grid, _ = np.meshgrid(efield_b, freq, indexing='ij')
-        width_grid, _ = np.meshgrid(width_b, freq, indexing='ij')
+        E0_b, efield_b, width_b, = np.broadcast_arrays(E0, efield, width)
         
-        query_points = np.zeros((efield_grid.size, 4))
-        query_points[:, 0] = E0_grid.ravel()
-        query_points[:, 1] = efield_grid.ravel()
-        query_points[:, 2] = width_grid.ravel()
-        query_points[:, 3] = freq_grid.ravel()
+        query_points = np.zeros((efield_b.size, 3))
+        query_points[:, 0] = E0_b.ravel()
+        query_points[:, 1] = efield_b.ravel()
+        query_points[:, 2] = width_b.ravel()
         
-        spectrum = self._lut_interpolator(query_points)
-        spectrum = spectrum.reshape(efield_grid.shape)
-        
+        lut_spectra = self._lut_interpolator(query_points)
+        spectra = np.empty_like(lut_spectra)
+        for i in range(lut_spectra.shape[0]):
+            spectra[i] = np.interp(freq, self._lut_freq, lut_spectra[i,:])
+
         if np.ndim(amplitude) > 0:
             amplitude = amplitude[:, np.newaxis]
             
-        return amplitude * spectrum
+        return amplitude * spectra
 
     def __call__(self, freq: NDArray, 
                  efield: float|NDArray = 0.0, 
