@@ -379,7 +379,7 @@ class HoltsmarkLine(BaseSpectralLine):
                   width_grid: NDArray,  # <-- Added width array
                   base_model: str = '2d'):
         """
-        Pre-calculates a 4D Lineshape Library (E0, efield, width, freq) for instant fitting.
+        Pre-calculates a 4D Lineshape (E0, efield, width, freq) Look Up Table or library for instant recall.
 
         Available models:
          - '2d' - for smart/quick lineshape calculations (2d is bad name, should be 'smart'
@@ -403,8 +403,12 @@ class HoltsmarkLine(BaseSpectralLine):
             raise ValueError(f"Build lut with {base_model=} is not implemented")
                 
         # 3. Create the 4-Dimensional Interpolator
+        self._lut_freq = freq_grid.copy()
+        self._lut_freq_max = self._lut_freq.max()
+        self._lut_freq_min = self._lut_freq.min()
+        # The lookup will be performed in E0, efield, and width space. It will return spectrum
         self._lut_interpolator = RegularGridInterpolator(
-            (E0_grid, efield_grid, width_grid, freq_grid),
+            (E0_grid, efield_grid, width_grid),
             library, 
             bounds_error=False, 
             fill_value=0.0
@@ -470,19 +474,21 @@ class HoltsmarkLine(BaseSpectralLine):
         
         # Safely clip query parameters to the LUT grid boundaries to prevent out-of-bounds 
         # linear extrapolation, which can produce negative values or empty gaps in the spectra.
-        grid_E0, grid_E, grid_W, grid_f = self._lut_interpolator.grid
+        grid_E0, grid_E, grid_W = self._lut_interpolator.grid
         E0 = np.clip(E0, grid_E0[0], grid_E0[-1])
         efield = np.clip(efield, grid_E[0], grid_E[-1])
         width = np.clip(width, grid_W[0], grid_W[-1])
+        freq = np.clip(freq, self._lut_freq_min, self._lut_freq_max)
+        # FIXME: I think it is better to fail with asserts, then do clip. --Eugeniy
 
         # Scalar parameters: return 1D frequency spectrum
         if efield.ndim == 0 and width.ndim == 0 and E0.ndim == 0:
-            query_points = np.zeros((len(freq), 4))
-            query_points[:, 0] = E0
-            query_points[:, 1] = efield
-            query_points[:, 2] = width
-            query_points[:, 3] = freq 
-            spectrum = self._lut_interpolator(query_points)
+            query_points = np.zeros(3)
+            query_points[0] = E0
+            query_points[1] = efield
+            query_points[2] = width
+            lut_spectrum = self._lut_interpolator(query_points).squeeze()
+            spectrum = np.interp(freq, self._lut_freq, lut_spectrum)
             return amplitude * spectrum
             
         # Array parameters (spatial grid): return 2D array (spatial x frequency)
