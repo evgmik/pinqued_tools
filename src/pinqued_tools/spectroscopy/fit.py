@@ -29,6 +29,15 @@ class FitModel():
         return difference / data_err
 
 
+def per_iteration(params, iter, resid, *args, **kws):
+    '''
+    Callback function to be called after each iteration of the fitting process.
+    It prints the current iteration number and the chi-square value (sum of squares of residuals) 
+    to monitor the fitting progress.
+    '''
+    # Print the iteration number and current chi-square (sum of squares of residuals)
+    print(f" Iteration: {iter}, Chi-square: {resid.var():.4f}")
+
 
 class DataFitter():
     def __init__(self, 
@@ -48,5 +57,6 @@ class DataFitter():
                           args=(self._data.axes.f, 
                                 self._data.signal, 
                                 self._data.signal_err),
+                          iter_cb=per_iteration,
                           **kwargs)
         return result
