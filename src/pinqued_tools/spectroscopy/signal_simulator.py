@@ -165,7 +165,7 @@ class GPPoissonSignalSimulator1D(SignalSimulator):
                            grad_vec: float|None = None,
                            E0: float|None = None,
                            amp: float|None = None,
-                           n_subsamples: int = 3
+                           n_subsamples: int = 5
                            ) -> NDArray:
         '''
         Simulate EIT signal for a given electric field using the Holtsmark lineshape.
@@ -174,12 +174,6 @@ class GPPoissonSignalSimulator1D(SignalSimulator):
 
         scale_factor = params['amp'].value if amp is None else amp
         width = params['width'].value
-
-        # 1. Get Stark shift and sensitivity from reference
-        # Note: spectral_sim.interp returns a list of (fpos, df_de) tuples
-        # We take the first dominant line for this 1D model
-        f0_dfdE_list_tuples = self._reference.interp(efield)
-        dfdE = [np.asarray(tup[1]) for tup in f0_dfdE_list_tuples]
 
         r_amp = [params[f'rel_amp_{i}'].value for i in range(len(self._hline_list))]
         

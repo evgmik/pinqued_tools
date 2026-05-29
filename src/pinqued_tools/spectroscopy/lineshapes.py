@@ -324,11 +324,15 @@ class HoltsmarkLine(BaseSpectralLine):
         self._dense_efield[:-1] = self._efield_reference[:]
         self._dense_stark[:-1] = self._stark_reference[:]
         self._dense_efield[-1] = self._efield_reference[-1]*10  # increase range by 10
+        
+        
+        # FIXME: linear approximation is BAD for large Efield, it should be quadratic!
+        # self._dense_stark[-1] = last_stark + last_slope * (self._dense_efield[-1] - max_ref_E)
+        # FIXED: we now use quadratic extrapolation based on the last two points of the reference and their derivatives
         last_stark = self.stark_interp(max_ref_E)
         last_slope = self.stark_interp(max_ref_E, nu=1)
-        # we do linear approximation at the extended range
-        # FIXME: linear approximation is BAD for large Efield, it should be quadratic!
-        self._dense_stark[-1] = last_stark + last_slope * (self._dense_efield[-1] - max_ref_E)
+        last_second_deriv = self.stark_interp(max_ref_E, nu=2)
+        self._dense_stark[-1] = last_stark + last_slope * (self._dense_efield[-1] - max_ref_E) + 0.5 * last_second_deriv * (self._dense_efield[-1] - max_ref_E)**2
         
         # 1. Pre-compute Holtsmark distribution and its analytical integral C(u)
         betas = np.linspace(0, 20.0, 2000)
@@ -357,7 +361,8 @@ class HoltsmarkLine(BaseSpectralLine):
         prob = np.empty_like(Etot_grid)
         valid = Etot_grid >= 0  # this E field magnitude distribution
         prob[~valid] = np.nan
-        E0 = max(E0, 1e-6)
+        E0 = max(E0, 1e-1)
+        print(f'Changed to E0 {E0}')
         if efield < 1e-6:
             betas = Etot_grid / E0
             prob[valid] = np.interp(betas[valid], self._dense_betas, self._dense_h_vals, left=0.0, right=0.0)
@@ -484,7 +489,7 @@ class HoltsmarkLine(BaseSpectralLine):
             query_points[:, 3] = freq 
             spectrum = self._lut_interpolator(query_points)
             return amplitude * spectrum
-            
+        
         # Array parameters (spatial grid): return 2D array (spatial x frequency)
         # Safely broadcast arrays before meshing
         E0_b, efield_b, width_b = np.broadcast_arrays(E0, efield, width)

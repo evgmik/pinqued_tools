@@ -189,7 +189,7 @@ class BSplinePoissonModel1D():
         spectra = data.signal
         
         if E0_vec_init is None:
-            self.E0_vec_init = np.full_like(self.x, 3.0)
+            self.E0_vec_init = np.full_like(self.x, 1.0)
         else:
             if len(E0_vec_init) != len(self.x):
                 raise ValueError(f"Length of E0_vec_init ({len(E0_vec_init)}) must match spatial axis length ({len(self.x)}).")
@@ -270,11 +270,13 @@ class BSplinePoissonModel1D():
             phi_slope = -5.0 * np.abs(self.x - self.x[0])
             c_init = self.B_plus @ phi_slope
 
+        # NOTE: Monotonic decreasng in phi(x) is not removed! 
+        # This allows for more flexible fitting while still guaranteeing physical plausibility.
         # Enforce monotonically decreasing potential phi(x) by constraining B-spline 
         # coefficients. This strictly guarantees Electric Field >= 0 everywhere.
-        params.add(f'c_{self.n_splines - 1}', value=0.0, vary=False)
+        params.add(f'c_{self.n_splines - 1}', value=0.0)
         for i in range(self.n_splines - 2, -1, -1):
-            delta_init = max(0.0, c_init[i] - c_init[i+1])
+            delta_init = c_init[i] - c_init[i+1]
             params.add(f'delta_c_{i}', value=delta_init)
             params.add(f'c_{i}', expr=f'c_{i+1} + delta_c_{i}')
             
@@ -283,8 +285,8 @@ class BSplinePoissonModel1D():
             params.add(f'c_E0_{i}', value=c_E0_init[i], min=1e-10, max=25.0, vary=True)
             
         # Enforce E -> 0 at the boundary deep in the plasma.
-        if self.n_splines > 1 and self.zero_bnd_efield:
-            params[f'delta_c_{self.n_splines - 2}'].set(value=0.0, vary=True)
+        # if self.n_splines > 1 and self.zero_bnd_efield:
+        #     params[f'delta_c_{self.n_splines - 2}'].set(value=0.0, vary=True)
         
         if 'fshift' not in params:
             params.add('fshift', value=0.0)
@@ -382,6 +384,7 @@ class BSplinePoissonModel1D():
 
 @njit(fastmath=True, cache=True)
 def _bspline_eval_vectors_numba(c, c_E0, c_b0, c_b1, c_amp, B, B_d1, B_d2):
+
     # Fast BLAS matrix multiplications
     phi_vec = B @ c
     E0_vec = B @ c_E0
