@@ -509,7 +509,8 @@ class HoltsmarkLine(BaseSpectralLine):
         query_points[:, 2] = width_b.ravel()
         
         lut_spectra = self._lut_interpolator(query_points)
-        spectra = np.empty_like(lut_spectra)
+        # spectra = np.empty_like(lut_spectra)
+        spectra = np.zeros((lut_spectra.shape[0], freq.shape[0]))
         for i in range(lut_spectra.shape[0]):
             spectra[i] = np.interp(freq, self._lut_freq, lut_spectra[i,:])
 
