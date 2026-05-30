@@ -597,6 +597,7 @@ class HoltsmarkLine(BaseSpectralLine):
 
         # We should check that shifts_flat are spaced tightly
         # with a spacing smaller than a  given fraction of natural linewidth
+        df_max = width/20.
         check_grid = True
         while(check_grid):
             new_freq = []
@@ -609,14 +610,33 @@ class HoltsmarkLine(BaseSpectralLine):
                     df = 0
                 else:
                     df = shifts_flat[i] - prev_fr
-                if abs(df) > width/20:
-                    # frequency step is to large, bisecting interval
-                    Efb = (prev_Ef + Etot_grid[i])/2
-                    frb = self.stark_map.Efield2freq( np.array([Efb]) )
-                    new_freq.append(frb[0])
-                    new_Ef.append(Efb)
-                    check_grid = True
-
+                if i>0:
+                    if shifts_flat[i-1] <= min_freq:
+                        # no need to check points which are outside
+                        # of desired frequency range
+                        # assumes the Etot_grid sorted in ascending order
+                        break
+                if abs(df) > df_max:
+                    if prev_Ef < self.stark_map._max_shift_Efield:
+                        print("bisecting")
+                        # frequency step is to large, bisecting interval
+                        Efb = (prev_Ef + Etot_grid[i])/2
+                        frb = self.stark_map.Efield2freq( np.array([Efb]) )
+                        new_freq.append(frb[0])
+                        new_Ef.append(Efb)
+                        check_grid = True
+                    else:
+                        # we are on a falling side of the Stark map
+                        # and can use monotonic shift vs Efield condition
+                        f_border = max(min_freq, shifts_flat[-1])
+                        
+                        Np = int(np.ceil(abs(f_border - shifts_flat[i-1])/(df_max*.9)))  # 0.9 to protect against rounding
+                        frb = np.linspace(prev_fr, f_border, Np)
+                        Efb = self.stark_map.freq2Efield(frb, branch="falling")
+                        
+                        new_freq.extend( frb.tolist() )
+                        new_Ef.extend( Efb.tolist() )
+                        break
                 prev_fr = shifts_flat[i]
                 prev_Ef = Etot_grid[i]
                 new_freq.append(prev_fr)
