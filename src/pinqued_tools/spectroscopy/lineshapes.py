@@ -623,6 +623,19 @@ class HoltsmarkLine(BaseSpectralLine):
                 return freq*0  # lineshape strength is zero in this case
             shifts_flat = shifts_flat[mask]
 
+            # for Narrow Holtsmark distribution we want to make sure
+            # to check provided efield point since it will be close to max probability
+            below_Ef = Etot_grid < efield
+            above_Ef = Etot_grid > efield
+            if (below_Ef.sum() >= 1) & (above_Ef.sum() >= 1):
+                if (Etot_grid[1]-Etot_grid[0]) > 0:
+                    Etot_grid = np.concat((Etot_grid[below_Ef], [efield], Etot_grid[above_Ef]))
+                    shifts_flat = np.concat((shifts_flat[below_Ef], self.stark_map.Efield2freq(np.array([efield], dtype=float)), shifts_flat[above_Ef]))
+                else:
+                    Etot_grid = np.concat((Etot_grid[above_Ef], [efield], Etot_grid[below_Ef]))
+                    shifts_flat = np.concat((shifts_flat[above_Ef], self.stark_map.Efield2freq(np.array([efield], dtype=float)), shifts_flat[below_Ef]))
+
+            print(Etot_grid)
             dEtot = np.zeros_like(Etot_grid)
             dEtot[:-1] = np.abs(np.diff(Etot_grid))  # protect against falling branch case
             # trapezoid dE approximation since we are doing integral and dE is not even
