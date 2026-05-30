@@ -593,6 +593,16 @@ class HoltsmarkLine(BaseSpectralLine):
                 _branch = "falling"  # for monotonic Stark Map frequency fall with Efield increase
             min_freq = freq[0] - 20*width
             max_freq = freq[-1] + 20*width
+
+            # if Holtsmark field/width is small than we want to sample only around
+            # reachable by Stark shift frequencies
+            Ef_tests = np.array([efield-20*E0_safe, efield+20*E0_safe])
+            Ef_tests = np.clip(Ef_tests, 0, None) # Electric field magnitude >= 0
+            if (Ef_tests.min() <= self.stark_map._max_shift_Efield) & (self.stark_map._max_shift_Efield <= Ef_tests.max()):
+                Ef_tests = np.concat((Ef_tests, [self.stark_map._max_shift_Efield]))
+            holtzmark_freq = self.stark_map.Efield2freq(Ef_tests)
+            min_freq = max(min_freq, holtzmark_freq.min())
+            max_freq = min(max_freq, holtzmark_freq.max())
             
             # limit tested frequency to reachable by StarkMap
             max_freq = min(max_freq, self.stark_map._max_shift_freq)
