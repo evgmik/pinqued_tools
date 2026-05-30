@@ -571,8 +571,6 @@ class HoltsmarkLine(BaseSpectralLine):
         _branch is used internally to select raising or falling part of Stark Map,
                 can take values None (default), "raising", and "falling"
         """
-        # FIXME: for small E0 values p(E) looks like delta function
-        # and we might miss the peak during sampling
         E0_safe = max(E0, 1e-6)
         if bruteforce:
             # worst case scenario, we cannot predict required grid
@@ -584,66 +582,58 @@ class HoltsmarkLine(BaseSpectralLine):
             shifts_flat = self.stark_map.Efield2freq(Etot_grid)
             return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
 
-        if (not self.stark_map.monotonic) and (_branch is None):
-            lineshape_f = self.line2d( freq, efield, width, E0, amplitude, bruteforce, _branch = "falling")
-            lineshape_r = self.line2d( freq, efield, width, E0, amplitude, bruteforce, _branch = "raising")
-            return lineshape_r + lineshape_f
-        else:
-            if (self.stark_map.monotonic) and (_branch is None):
-                _branch = "falling"  # for monotonic Stark Map frequency fall with Efield increase
-            min_freq = freq[0] - 20*width
-            max_freq = freq[-1] + 20*width
+        # adaptive grid in Holtsmark distribution space
+        min_freq = freq[0] - 20*width
+        max_freq = freq[-1] + 20*width
 
-            # if Holtsmark field/width is small than we want to sample only around
-            # reachable by Stark shift frequencies
-            Ef_tests = np.array([efield-20*E0_safe, efield+20*E0_safe])
-            Ef_tests = np.clip(Ef_tests, 0, None) # Electric field magnitude >= 0
-            if (Ef_tests.min() <= self.stark_map._max_shift_Efield) & (self.stark_map._max_shift_Efield <= Ef_tests.max()):
-                Ef_tests = np.concat((Ef_tests, [self.stark_map._max_shift_Efield]))
-            holtzmark_freq = self.stark_map.Efield2freq(Ef_tests)
-            min_freq = max(min_freq, holtzmark_freq.min())
-            max_freq = min(max_freq, holtzmark_freq.max())
-            
-            # limit tested frequency to reachable by StarkMap
-            max_freq = min(max_freq, self.stark_map._max_shift_freq)
-            if _branch == "raising":
-                min_freq = max(self.stark_map._freq[0], min_freq)
-            if min_freq >= max_freq:
-                # we are really testing for min_freq == max_freq, no candidates to test
-                return freq*0  # lineshape strength is zero in this case
+        # it makes sense to sample with spacing relative to Holtsmark field distribution
+        steps = np.logspace(-1, 1.3, 20) # from 0.1 to 20 logspaced
+        Etot_grid = np.concat((efield-steps[::-1]*E0_safe, [efield], efield+steps*E0_safe))
+        Etot_grid = np.clip(Etot_grid, 0, None) # Electric field magnitude >= 0
+        if (Etot_grid.min() < self.stark_map._max_shift_Efield) & (self.stark_map._max_shift_Efield < Etot_grid.max()):
+            below_Ef_max_shift = (Etot_grid < self.stark_map._max_shift_Efield)
+            Etot_grid = np.concat((Etot_grid[below_Ef_max_shift], [self.stark_map._max_shift_Efield], Etot_grid[~below_Ef_max_shift]))
+        shifts_flat = self.stark_map.Efield2freq(Etot_grid)
 
-            shifts_flat = np.linspace(min_freq, max_freq, max(100, int(np.ceil((max_freq - min_freq)/width*20))))
-            Etot_grid = self.stark_map.freq2Efield(shifts_flat, branch = _branch)
-
-            # select only achievable Electric fields in Holtsmark distribution
-            mask = (~np.isnan(Etot_grid))
-            Etot_grid = Etot_grid[mask]
-            if np.sum(mask) < 2:
-                print("not enough hits of the matching E field on our frequency grid")
-                return freq*0  # lineshape strength is zero in this case
-            shifts_flat = shifts_flat[mask]
-
-            # for Narrow Holtsmark distribution we want to make sure
-            # to check provided efield point since it will be close to max probability
-            below_Ef = Etot_grid < efield
-            above_Ef = Etot_grid > efield
-            if (below_Ef.sum() >= 1) & (above_Ef.sum() >= 1):
-                if (Etot_grid[1]-Etot_grid[0]) > 0:
-                    Etot_grid = np.concat((Etot_grid[below_Ef], [efield], Etot_grid[above_Ef]))
-                    shifts_flat = np.concat((shifts_flat[below_Ef], self.stark_map.Efield2freq(np.array([efield], dtype=float)), shifts_flat[above_Ef]))
+        # We should check that shifts_flat are spaced tightly
+        # with a spacing smaller than a  given fraction of natural linewidth
+        check_grid = True
+        while(check_grid):
+            new_freq = []
+            new_Ef = []
+            prev_fr = None
+            prev_Ef = None
+            check_grid = False
+            for i in range(shifts_flat.size):
+                if i==0:
+                    df = 0
                 else:
-                    Etot_grid = np.concat((Etot_grid[above_Ef], [efield], Etot_grid[below_Ef]))
-                    shifts_flat = np.concat((shifts_flat[above_Ef], self.stark_map.Efield2freq(np.array([efield], dtype=float)), shifts_flat[below_Ef]))
+                    df = shifts_flat[i] - prev_fr
+                if abs(df) > width/20:
+                    # frequency step is to large, bisecting interval
+                    Efb = (prev_Ef + Etot_grid[i])/2
+                    frb = self.stark_map.Efield2freq( np.array([Efb]) )
+                    new_freq.append(frb[0])
+                    new_Ef.append(Efb)
+                    check_grid = True
 
-            print(Etot_grid)
-            dEtot = np.zeros_like(Etot_grid)
-            dEtot[:-1] = np.abs(np.diff(Etot_grid))  # protect against falling branch case
-            # trapezoid dE approximation since we are doing integral and dE is not even
-            dEtot[-1] = 0
-            dEtot[1:] += dEtot[:-1]
-            dEtot /= 2
+                prev_fr = shifts_flat[i]
+                prev_Ef = Etot_grid[i]
+                new_freq.append(prev_fr)
+                new_Ef.append(prev_Ef)
+            shifts_flat = np.array( new_freq )
+            Etot_grid = np.array( new_Ef )
+        valid_mask = (min_freq <= shifts_flat) & (shifts_flat <= max_freq)
+        Etot_grid = Etot_grid[valid_mask]
+        shifts_flat = shifts_flat[valid_mask]
+        dEtot = np.zeros_like(Etot_grid)
+        dEtot[:-1] = np.abs(np.diff(Etot_grid))  # protect against falling branch case
+        # trapezoid dE approximation since we are doing integral and dE is not even
+        dEtot[-1] = 0
+        dEtot[1:] += dEtot[:-1]
+        dEtot /= 2
+        weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
 
-            weights_flat = self._get_P_Etot(Etot_grid, efield, E0_safe) * dEtot
         return _fast_lorentzian_sum(freq, shifts_flat, weights_flat, width, amplitude)
     
     def _integrate_holtsmark(self, beta):
