@@ -611,11 +611,11 @@ class HoltsmarkLine(BaseSpectralLine):
                 else:
                     df = shifts_flat[i] - prev_fr
                 if i>0:
-                    if shifts_flat[i-1] <= min_freq:
+                    if (prev_fr <= min_freq) & (shifts_flat[i] < min_freq):
                         # no need to check points which are outside
                         # of desired frequency range
                         # assumes the Etot_grid sorted in ascending order
-                        break
+                        continue
                 if abs(df) > df_max:
                     if prev_Ef < self.stark_map._max_shift_Efield:
                         # print("bisecting")
