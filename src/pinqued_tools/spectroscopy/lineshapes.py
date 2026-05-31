@@ -618,8 +618,10 @@ class HoltsmarkLine(BaseSpectralLine):
                         break
                 if abs(df) > df_max:
                     if prev_Ef < self.stark_map._max_shift_Efield:
-                        print("bisecting")
-                        # frequency step is to large, bisecting interval
+                        # print("bisecting")
+                        # frequency step is to large
+                        # but we cannot yet use monotonic shift approximation
+                        # bisecting interval
                         Efb = (prev_Ef + Etot_grid[i])/2
                         frb = self.stark_map.Efield2freq( np.array([Efb]) )
                         new_freq.append(frb[0])
@@ -627,16 +629,28 @@ class HoltsmarkLine(BaseSpectralLine):
                         check_grid = True
                     else:
                         # we are on a falling side of the Stark map
-                        # and can use monotonic shift vs Efield condition
-                        f_border = max(min_freq, shifts_flat[-1])
-                        
-                        Np = int(np.ceil(abs(f_border - shifts_flat[i-1])/(df_max*.9)))  # 0.9 to protect against rounding
-                        frb = np.linspace(prev_fr, f_border, Np)
-                        Efb = self.stark_map.freq2Efield(frb, branch="falling")
-                        
-                        new_freq.extend( frb.tolist() )
-                        new_Ef.extend( Efb.tolist() )
-                        break
+                        if prev_Ef < efield:
+                            # however we did not reach requested the external efield
+                            # (more precisely the field at which Holtsmark probability is maximum)
+                            # we still have to add points in between intervals
+                            Np = int(np.floor(abs(df)/(df_max*.9)))  # 0.9 to protect against rounding
+                            f_border = shifts_flat[i]
+                            frb = np.linspace(prev_fr, f_border, Np+2) # +2 for the ends
+                            frb = frb[1:-1]  # removing ends since we know the answers
+                            Efb = self.stark_map.freq2Efield(frb, branch="falling")
+                            new_freq.extend(frb)
+                            new_Ef.extend(Efb)
+                        else:
+                            # we can use monotonic shift vs Efield condition
+                            f_border = max(min_freq, shifts_flat[-1])
+                            Np = int(np.floor(abs(f_border - prev_fr)/(df_max*.9)))  # 0.9 to protect against rounding
+                            frb = np.linspace(prev_fr, f_border, Np+2)  # +2 for the ends
+                            frb = frb[1:]  # removing prev_fr position
+                            Efb = self.stark_map.freq2Efield(frb, branch="falling")
+                            
+                            new_freq.extend( frb.tolist() )
+                            new_Ef.extend( Efb.tolist() )
+                            break
                 prev_fr = shifts_flat[i]
                 prev_Ef = Etot_grid[i]
                 new_freq.append(prev_fr)
