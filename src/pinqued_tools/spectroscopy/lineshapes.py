@@ -659,6 +659,10 @@ class HoltsmarkLine(BaseSpectralLine):
             Etot_grid = np.array( new_Ef )
         valid_mask = (min_freq <= shifts_flat) & (shifts_flat <= max_freq)
         Etot_grid = Etot_grid[valid_mask]
+        if Etot_grid.size <= 1:
+            # to few points produce a shift
+            # we will not be able do weighted sum
+            return freq*0  # flat zero spectrum
         shifts_flat = shifts_flat[valid_mask]
         dEtot = np.zeros_like(Etot_grid)
         dEtot[:-1] = np.abs(np.diff(Etot_grid))  # protect against falling branch case
