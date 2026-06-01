@@ -589,7 +589,11 @@ class HoltsmarkLine(BaseSpectralLine):
         # it makes sense to sample with spacing relative to Holtsmark field distribution
         steps = np.logspace(-1, 1.3, 20) # from 0.1 to 20 logspaced
         Etot_grid = np.concat((efield-steps[::-1]*E0_safe, [efield], efield+steps*E0_safe))
-        Etot_grid = np.clip(Etot_grid, 0, None) # Electric field magnitude >= 0
+        below_zero = Etot_grid < 0
+        Etot_grid = Etot_grid[~below_zero] # Keep only positive Efield magnitudes >= 0
+        if np.any(below_zero):
+            # if we had points below zero we should insert 0 in the check list
+            Etot_grid = np.concat(([0], Etot_grid))
         if (Etot_grid.min() < self.stark_map._max_shift_Efield) & (self.stark_map._max_shift_Efield < Etot_grid.max()):
             below_Ef_max_shift = (Etot_grid < self.stark_map._max_shift_Efield)
             Etot_grid = np.concat((Etot_grid[below_Ef_max_shift], [self.stark_map._max_shift_Efield], Etot_grid[~below_Ef_max_shift]))
@@ -618,7 +622,6 @@ class HoltsmarkLine(BaseSpectralLine):
                         continue
                 if abs(df) > df_max:
                     if prev_Ef < self.stark_map._max_shift_Efield:
-                        # print("bisecting")
                         # frequency step is to large
                         # but we cannot yet use monotonic shift approximation
                         # bisecting interval
